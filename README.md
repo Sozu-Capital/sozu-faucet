@@ -154,6 +154,13 @@ See `lib/client.ts` helpers the wallet can copy/import later.
 
 Public claim UI: paste C…/G… + Turnstile captcha + strict per-wallet cooldown.
 
+### Copy prompt — pre-authorized agent handoff (implemented)
+
+On the faucet page: resolve C…/G… (or $sozutag) → captcha → **Copy prompt**.
+Server mints a ~5-minute Mode A JWT via `POST /api/v1/faucet/prompt-token` and puts an exact claim curl on the clipboard. Agents never need `FAUCET_AUTH_SECRET` or Turnstile.
+
+Agent docs (live): `/agents.md`, `/llms.txt`.
+
 ### Login with Sozu — OAuth-style handoff (planned v1.1)
 
 User clicks "Login with Sozu" → redirects to Wallet → passkey → back to faucet with short-lived JWT.
