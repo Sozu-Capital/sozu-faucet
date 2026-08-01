@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 
 type StatusPayload = {
   faucet: {
@@ -27,6 +27,14 @@ type ClaimPayload = {
   nextAvailableAt?: string;
 };
 
+type PromptTokenPayload = {
+  prompt?: string;
+  error?: string;
+  reason?: string;
+  nextAvailableAt?: string;
+  expiresInSeconds?: number;
+};
+
 function isValidStellarAddress(addr: string): boolean {
   return /^[CG][A-Z0-9]{55}$/.test(addr.trim().toUpperCase());
 }
@@ -36,21 +44,37 @@ function isSozuTag(input: string): boolean {
   return trimmed.startsWith("$") || /^[a-z0-9_-]+$/i.test(trimmed);
 }
 
-async function resolveSozuTag(tag: string): Promise<string | null> {
+type ResolveSozuTagResult =
+  | { ok: true; address: string; tag?: string }
+  | { ok: false; error: string };
+
+async function resolveSozuTag(tag: string): Promise<ResolveSozuTagResult> {
   const cleanTag = tag.startsWith("$") ? tag.slice(1) : tag;
-  
-  // TODO: Replace with actual sozutag API endpoint
-  // For now, this is a placeholder that will need the real resolver
+
   try {
-    const response = await fetch(`/api/sozutag/resolve?tag=${encodeURIComponent(cleanTag)}`);
-    if (response.ok) {
-      const data = await response.json();
-      return data.address || null;
+    const response = await fetch(
+      `/api/sozutag/resolve?tag=${encodeURIComponent(cleanTag)}`,
+    );
+    const data = (await response.json()) as {
+      address?: string;
+      tag?: string;
+      error?: string;
+    };
+    if (response.ok && data.address) {
+      return { ok: true, address: data.address, tag: data.tag };
     }
+    return {
+      ok: false,
+      error:
+        data.error ??
+        `Could not resolve sozutag: ${cleanTag}. Check spelling or use a C…/G… address directly.`,
+    };
   } catch {
-    // Sozutag resolution failed - will show error to user
+    return {
+      ok: false,
+      error: `Could not reach sozutag resolver for ${cleanTag}. Try again or paste a C…/G… address.`,
+    };
   }
-  return null;
 }
 
 function formatCountdown(isoString: string | undefined): string {
@@ -66,8 +90,21 @@ function formatCountdown(isoString: string | undefined): string {
   return remainMins > 0 ? `${hrs}h ${remainMins}m` : `${hrs}h`;
 }
 
+function resetTurnstile(setCaptchaToken: (t: string | null) => void) {
+  if (
+    typeof window !== "undefined" &&
+    (window as any).turnstile &&
+    process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY
+  ) {
+    (window as any).turnstile.reset();
+    setCaptchaToken(null);
+  }
+}
+
 export default function HomePage() {
   const [recipientInput, setRecipientInput] = useState("");
+  const [resolvedWallet, setResolvedWallet] = useState<string | null>(null);
+  const [walletStatus, setWalletStatus] = useState<StatusPayload | null>(null);
   const [status, setStatus] = useState<StatusPayload | null>(null);
   const [message, setMessage] = useState<{
     kind: "ok" | "err";
@@ -80,6 +117,37 @@ export default function HomePage() {
   const [captchaToken, setCaptchaToken] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
   const [resolving, setResolving] = useState(false);
+  const [mintingPrompt, setMintingPrompt] = useState(false);
+  const [promptPreview, setPromptPreview] = useState<string | null>(null);
+  const [promptError, setPromptError] = useState<string | null>(null);
+  const closedVideoRef = useRef<HTMLVideoElement>(null);
+  const openVideoRef = useRef<HTMLVideoElement>(null);
+  const [baseUrl, setBaseUrl] = useState(
+    process.env.NEXT_PUBLIC_FAUCET_PUBLIC_URL || "",
+  );
+
+  const captchaConfigured = !!process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY;
+  const claimAmount = status?.faucet.claimAmount ?? 20;
+  const claiming = pending && !resolving;
+
+  useEffect(() => {
+    setBaseUrl(window.location.origin);
+  }, []);
+
+  useEffect(() => {
+    const closed = closedVideoRef.current;
+    const open = openVideoRef.current;
+    if (!closed || !open) return;
+
+    if (claiming) {
+      void open.play().catch(() => {});
+      closed.pause();
+    } else {
+      void closed.play().catch(() => {});
+      open.pause();
+      open.currentTime = 0;
+    }
+  }, [claiming]);
 
   useEffect(() => {
     void fetch("/api/v1/faucet/status")
@@ -88,7 +156,58 @@ export default function HomePage() {
       .catch(() => setStatus(null));
   }, []);
 
-  // Load Turnstile widget
+  // Resolve address / sozutag + fetch per-wallet cooldown for Copy gating
+  useEffect(() => {
+    const trimmed = recipientInput.trim();
+    if (!trimmed) {
+      setResolvedWallet(null);
+      setWalletStatus(null);
+      setPromptPreview(null);
+      return;
+    }
+
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      let wallet: string | null = null;
+
+      if (isValidStellarAddress(trimmed)) {
+        wallet = trimmed.toUpperCase();
+      } else if (isSozuTag(trimmed)) {
+        setResolving(true);
+        const resolved = await resolveSozuTag(trimmed);
+        if (!cancelled) setResolving(false);
+        if (resolved.ok) wallet = resolved.address;
+      }
+
+      if (cancelled) return;
+
+      if (!wallet || !isValidStellarAddress(wallet)) {
+        setResolvedWallet(null);
+        setWalletStatus(null);
+        return;
+      }
+
+      const normalized = wallet.toUpperCase();
+      setResolvedWallet(normalized);
+
+      try {
+        const res = await fetch(
+          `/api/v1/faucet/status?wallet=${encodeURIComponent(normalized)}`,
+        );
+        if (!cancelled && res.ok) {
+          setWalletStatus((await res.json()) as StatusPayload);
+        }
+      } catch {
+        if (!cancelled) setWalletStatus(null);
+      }
+    }, 350);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [recipientInput]);
+
   useEffect(() => {
     const siteKey = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY;
     if (!siteKey) return;
@@ -111,16 +230,17 @@ export default function HomePage() {
     document.body.appendChild(script);
   }, []);
 
-  async function claim() {
-    setMessage(null);
+  async function resolveRecipient(): Promise<string | null> {
     const trimmed = recipientInput.trim();
-
     if (!trimmed) {
       setMessage({ kind: "err", text: "Enter a Stellar address or $sozutag." });
-      return;
+      return null;
     }
 
-    // Resolve address or sozutag
+    if (resolvedWallet && isValidStellarAddress(resolvedWallet)) {
+      return resolvedWallet;
+    }
+
     let resolvedAddress = trimmed;
 
     if (isSozuTag(trimmed) && !isValidStellarAddress(trimmed)) {
@@ -128,14 +248,14 @@ export default function HomePage() {
       const resolved = await resolveSozuTag(trimmed);
       setResolving(false);
 
-      if (!resolved) {
+      if (!resolved.ok) {
         setMessage({
           kind: "err",
-          text: `Could not resolve sozutag: ${trimmed}. Check spelling or use a C…/G… address directly.`,
+          text: resolved.error,
         });
-        return;
+        return null;
       }
-      resolvedAddress = resolved;
+      resolvedAddress = resolved.address;
     }
 
     if (!isValidStellarAddress(resolvedAddress)) {
@@ -143,10 +263,18 @@ export default function HomePage() {
         kind: "err",
         text: "Invalid address. Stellar addresses are 56 chars starting with C or G.",
       });
-      return;
+      return null;
     }
 
-    if (!captchaToken && process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY) {
+    return resolvedAddress.toUpperCase();
+  }
+
+  async function claim() {
+    setMessage(null);
+    const address = await resolveRecipient();
+    if (!address) return;
+
+    if (!captchaToken && captchaConfigured) {
       setMessage({
         kind: "err",
         text: "Please complete the captcha challenge.",
@@ -160,7 +288,7 @@ export default function HomePage() {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            to: resolvedAddress,
+            to: address,
             captchaToken: captchaToken ?? undefined,
           }),
         });
@@ -186,21 +314,17 @@ export default function HomePage() {
           });
         }
 
-        // Reset captcha
-        if (
-          typeof window !== "undefined" &&
-          (window as any).turnstile &&
-          process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY
-        ) {
-          (window as any).turnstile.reset();
-          setCaptchaToken(null);
-        }
+        resetTurnstile(setCaptchaToken);
 
-        // Refresh status
         const refreshed = await fetch("/api/v1/faucet/status").then((r) =>
           r.json(),
         );
         setStatus(refreshed as StatusPayload);
+
+        const walletRefreshed = await fetch(
+          `/api/v1/faucet/status?wallet=${encodeURIComponent(address)}`,
+        ).then((r) => r.json());
+        setWalletStatus(walletRefreshed as StatusPayload);
       } catch (err) {
         setMessage({
           kind: "err",
@@ -217,24 +341,145 @@ export default function HomePage() {
     });
   }
 
-  const baseUrl =
-    typeof window !== "undefined"
-      ? window.location.origin
-      : process.env.NEXT_PUBLIC_FAUCET_PUBLIC_URL || "";
+  const walletOnCooldown =
+    !!walletStatus &&
+    !walletStatus.availability.available &&
+    (walletStatus.availability.reason === "user_cooldown" ||
+      walletStatus.availability.reason === "global_cooldown" ||
+      walletStatus.availability.reason === "empty_today" ||
+      walletStatus.availability.reason === "inactive" ||
+      walletStatus.availability.reason === "insufficient_vault");
 
-  const agentPrompt = `Get 20 testnet USDC from Sozu Faucet:
+  const copyBlockedReason = (() => {
+    if (!recipientInput.trim()) return "Enter a C…/G… or $sozutag above.";
+    if (resolving) return "Resolving sozutag…";
+    if (!resolvedWallet) return "Need a valid C…/G… address before copying.";
+    if (walletOnCooldown) {
+      const when = walletStatus?.availability.nextAvailableAt
+        ? formatCountdown(walletStatus.availability.nextAvailableAt)
+        : null;
+      const reason = walletStatus?.availability.reason ?? "unavailable";
+      return when
+        ? `Unavailable (${reason}). Next available: ${when}.`
+        : `Unavailable (${reason}).`;
+    }
+    if (captchaConfigured && !captchaToken) {
+      return "Complete captcha, then copy — mints a 5-minute claim token.";
+    }
+    return null;
+  })();
 
-curl -X POST ${baseUrl}/api/v1/faucet/claim \\
+  const canCopyPrompt =
+    !!resolvedWallet &&
+    !walletOnCooldown &&
+    !resolving &&
+    !mintingPrompt &&
+    (!captchaConfigured || !!captchaToken);
+
+  async function copyAgentPrompt() {
+    setPromptError(null);
+    if (!canCopyPrompt || !resolvedWallet) return;
+
+    setMintingPrompt(true);
+    try {
+      const res = await fetch("/api/v1/faucet/prompt-token", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          walletAddress: resolvedWallet,
+          captchaToken: captchaToken ?? undefined,
+        }),
+      });
+      const data = (await res.json()) as PromptTokenPayload;
+
+      if (!res.ok || !data.prompt) {
+        const when = data.nextAvailableAt
+          ? ` Next available: ${formatCountdown(data.nextAvailableAt)}.`
+          : "";
+        setPromptError(
+          `${data.error ?? "Could not mint prompt token"}${when}`,
+        );
+        if (data.nextAvailableAt) {
+          setWalletStatus((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  availability: {
+                    ...prev.availability,
+                    available: false,
+                    reason: data.reason,
+                    nextAvailableAt: data.nextAvailableAt,
+                  },
+                }
+              : prev,
+          );
+        }
+        resetTurnstile(setCaptchaToken);
+        return;
+      }
+
+      setPromptPreview(data.prompt);
+      await navigator.clipboard.writeText(data.prompt);
+      setCopied("agent-prompt");
+      setTimeout(() => setCopied(null), 2500);
+      resetTurnstile(setCaptchaToken);
+    } catch (err) {
+      setPromptError(
+        err instanceof Error ? err.message : "Could not mint prompt token",
+      );
+    } finally {
+      setMintingPrompt(false);
+    }
+  }
+
+  const idlePromptPreview = resolvedWallet
+    ? `Claim ${claimAmount} testnet USDC from Sozu Faucet (token expires in ~5m):
+
+curl -sS -X POST ${baseUrl}/api/v1/faucet/claim \\
+  -H "Authorization: Bearer <minted-on-copy>" \\
   -H "Content-Type: application/json" \\
-  -d '{"to":"YOUR_STELLAR_ADDRESS","captchaToken":"..."}'
+  -d '{"to":"${resolvedWallet}"}'
 
-Note: Captcha required in browser. For agent automation, use Mode A JWT (see docs).`;
+Print the JSON. On success, open:
+https://stellar.expert/explorer/testnet/contract/${resolvedWallet}`
+    : `Enter a recipient above, complete captcha, then Copy prompt.
+Clipboard will contain a working Mode A claim curl (address + 5-minute Bearer token).
+No secrets to hunt. No captcha for the agent.
+
+Docs: ${baseUrl}/agents.md`;
 
   return (
-    <main>
+    <>
+      <div
+        className={`bg-video${claiming ? " bg-video--claiming" : ""}`}
+        aria-hidden="true"
+      >
+        <video
+          ref={closedVideoRef}
+          className="bg-video__layer bg-video__layer--closed"
+          src="/faucet_closed_dithered.mp4"
+          muted
+          loop
+          playsInline
+          autoPlay
+          preload="auto"
+        />
+        <video
+          ref={openVideoRef}
+          className="bg-video__layer bg-video__layer--open"
+          src="/faucet_open_dithered.mp4"
+          muted
+          loop
+          playsInline
+          preload="auto"
+        />
+        <div className="bg-video__veil" />
+      </div>
+
+      <main>
       <h1>Sozu Faucet</h1>
       <p className="lede">
-        Testnet Circle USDC (SAC). One click. No Freighter detour.
+        Get test USDC (SAC) in one click, or tell your agent to get the cash for you
       </p>
 
       <div className="panel">
@@ -243,20 +488,22 @@ Note: Captcha required in browser. For agent automation, use Mode A JWT (see doc
           <div style={{ display: "flex", gap: "0.5rem", alignItems: "stretch" }}>
             <input
               value={recipientInput}
-              onChange={(e) => setRecipientInput(e.target.value)}
+              onChange={(e) => {
+                setRecipientInput(e.target.value);
+                setPromptPreview(null);
+                setPromptError(null);
+              }}
               placeholder="C…, G…, or $sozutag"
               autoComplete="off"
               spellCheck={false}
-              disabled={pending || resolving}
+              disabled={pending || resolving || mintingPrompt}
               style={{ flex: 1 }}
             />
             <button
               type="button"
               className="login-btn"
-              disabled={pending || resolving}
+              disabled={pending || resolving || mintingPrompt}
               onClick={() => {
-                // TODO: Implement OAuth handoff redirect
-                // For now, show coming soon message
                 setMessage({
                   kind: "err",
                   text: "Login with Sozu coming soon. Use paste address for now.",
@@ -268,7 +515,22 @@ Note: Captcha required in browser. For agent automation, use Mode A JWT (see doc
           </div>
         </label>
 
-        {process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY && (
+        {resolvedWallet && (
+          <p
+            style={{
+              margin: "0.4rem 0 0",
+              fontSize: "0.82rem",
+              color: "var(--muted)",
+            }}
+          >
+            Resolved: {resolvedWallet.slice(0, 4)}…{resolvedWallet.slice(-4)}
+            {walletOnCooldown && walletStatus?.availability.nextAvailableAt
+              ? ` · cooldown ${formatCountdown(walletStatus.availability.nextAvailableAt)}`
+              : ""}
+          </p>
+        )}
+
+        {captchaConfigured && (
           <div
             id="turnstile-widget"
             style={{ minHeight: "65px", marginTop: "0.5rem" }}
@@ -277,7 +539,7 @@ Note: Captcha required in browser. For agent automation, use Mode A JWT (see doc
 
         <button
           type="button"
-          disabled={pending || resolving}
+          disabled={pending || resolving || mintingPrompt}
           onClick={claim}
           style={{ marginTop: "0.5rem" }}
         >
@@ -285,7 +547,7 @@ Note: Captcha required in browser. For agent automation, use Mode A JWT (see doc
             ? resolving
               ? "Resolving sozutag…"
               : "Claiming…"
-            : `Get ${status?.faucet.claimAmount ?? 20} testnet USDC`}
+            : `Get ${claimAmount} testnet USDC`}
         </button>
 
         {message && (
@@ -340,25 +602,48 @@ Note: Captcha required in browser. For agent automation, use Mode A JWT (see doc
 
       <div className="agent-section">
         <h2>For agents & automation</h2>
-        <p>Copy this prompt for your agent to handle testnet funding:</p>
+        <p>
+          Copy a pre-authorized claim prompt — address + short-lived Bearer
+          token. Agent runs one curl.
+        </p>
         <div className="agent-prompt">
-          <pre>{agentPrompt}</pre>
+          <pre>{promptPreview ?? idlePromptPreview}</pre>
           <button
             type="button"
             className="copy-btn-small"
-            onClick={() => copy(agentPrompt, "agent-prompt")}
+            disabled={!canCopyPrompt}
+            onClick={() => void copyAgentPrompt()}
+            title={copyBlockedReason ?? "Mint JWT and copy claim curl"}
           >
-            {copied === "agent-prompt" ? "Copied!" : "Copy prompt"}
+            {mintingPrompt
+              ? "Minting…"
+              : copied === "agent-prompt"
+                ? "Copied!"
+                : "Copy prompt"}
           </button>
         </div>
-        {status && (
-          <p style={{ marginTop: "1rem", fontSize: "0.85rem", color: "var(--muted)" }}>
-            Status: {status.availability.available ? "Available" : `${status.availability.reason}`} · 
-            {" "}{status.availability.remainingToday} USDC left today · 
-            Cooldown {status.faucet.cooldownMinutes}m
+        {copyBlockedReason && (
+          <p
+            style={{
+              marginTop: "0.65rem",
+              fontSize: "0.85rem",
+              color: "var(--muted)",
+            }}
+          >
+            {copyBlockedReason}
+          </p>
+        )}
+        {promptError && (
+          <p
+            className="status err"
+            style={{ marginTop: "0.65rem" }}
+            role="status"
+          >
+            {promptError}
           </p>
         )}
       </div>
     </main>
+    </>
   );
 }

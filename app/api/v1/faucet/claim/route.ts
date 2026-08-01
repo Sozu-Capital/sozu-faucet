@@ -1,3 +1,4 @@
+import { anonUserId } from "@/lib/agent-prompt";
 import {
   clientIp,
   resolveAuth,
@@ -133,8 +134,8 @@ export async function POST(request: Request) {
       return withCors(request, Response.json(res, { status: 400 }));
     }
 
-    // Synthesize anon userId for cooldown binding
-    userId = `anon:${walletAddress}`;
+    // Synthesize anon userId for cooldown binding (shared with prompt-token)
+    userId = anonUserId(walletAddress);
   }
 
   try {

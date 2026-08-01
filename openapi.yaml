@@ -10,6 +10,15 @@ paths:
   /api/v1/faucet/status:
     get:
       summary: Faucet identity + availability
+      description: |
+        Public. Optional `Authorization: Bearer`, or `?wallet=C…/G…` for that wallet's cooldown.
+      parameters:
+        - name: wallet
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Stellar C…/G… address for per-wallet cooldown
       security:
         - bearerAuth: []
         - {}
@@ -20,6 +29,31 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/StatusResponse"
+  /api/v1/faucet/prompt-token:
+    post:
+      summary: Mint short-lived Mode A JWT for Copy prompt
+      description: |
+        Human-gated (Turnstile when configured). Returns a ~5-minute wallet-bound JWT
+        and a ready-to-paste agent prompt. Does not expose FAUCET_AUTH_SECRET.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [walletAddress]
+              properties:
+                walletAddress:
+                  type: string
+                captchaToken:
+                  type: string
+      responses:
+        "200":
+          description: Token + clipboard prompt
+        "401":
+          description: Captcha missing or failed
+        "409":
+          description: Wallet on cooldown / unavailable
   /api/v1/faucet/claim:
     post:
       summary: Claim testnet Circle USDC SAC

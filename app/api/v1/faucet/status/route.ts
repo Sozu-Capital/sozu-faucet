@@ -1,9 +1,10 @@
+import { anonUserId } from "@/lib/agent-prompt";
 import { resolveAuth } from "@/lib/auth";
 import {
   computeAvailability,
   toPublicFaucet,
 } from "@/lib/availability";
-import { getFaucetConfig } from "@/lib/config";
+import { getFaucetConfig, normalizeAddress } from "@/lib/config";
 import { optionsResponse, withCors } from "@/lib/cors";
 import { vaultCanCoverClaim } from "@/lib/payout";
 import type { FaucetStatusResponse } from "@/lib/types";
@@ -28,7 +29,7 @@ async function optionalAuth(request: Request) {
 
 /**
  * GET /v1/faucet/status
- * Public. When Authorization Bearer is present, includes user_cooldown.
+ * Public. Optional Authorization Bearer, or ?wallet=C…/G… for that wallet's cooldown.
  */
 export async function GET(request: Request) {
   try {
@@ -46,10 +47,29 @@ export async function GET(request: Request) {
 
   try {
     const ctx = await optionalAuth(request);
+    const walletParam = new URL(request.url).searchParams.get("wallet");
+
+    let userId = ctx?.userId ?? null;
+    let walletAddress = ctx?.walletAddress ?? null;
+
+    if (!ctx && walletParam) {
+      try {
+        walletAddress = normalizeAddress(walletParam);
+        userId = anonUserId(walletAddress);
+      } catch {
+        return withCors(
+          request,
+          Response.json(
+            { error: "Invalid wallet address", reason: "invalid_address" },
+            { status: 400 },
+          ),
+        );
+      }
+    }
 
     let availability = await computeAvailability({
-      userId: ctx?.userId ?? null,
-      walletAddress: ctx?.walletAddress ?? null,
+      userId,
+      walletAddress,
     });
 
     const claimAmount = getFaucetConfig().claimAmount;
