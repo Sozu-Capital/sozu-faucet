@@ -1,0 +1,99 @@
+# Ping Sozu Faucet /api/health hourly. If USDC is low (or health is down),
+# push a notification to ntfy.sh (phone).
+#
+# Required repo secret:
+#   NTFY_TOPIC — e.g. sozu-faucet-low-7f3k2
+#
+# Optional repo variables (Settings → Variables):
+#   FAUCET_HEALTH_URL   default https://faucet.sozu.capital/api/health
+#   FAUCET_ALERT_USDC   default 5000
+#   FAUCET_PANIC_USDC   default 500
+
+name: Faucet balance alert
+
+on:
+  schedule:
+    # Every hour at :15 UTC
+    - cron: "15 * * * *"
+  workflow_dispatch: # "Run workflow" button in the Actions UI (for testing)
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check treasury and notify if low
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          HEALTH_URL: ${{ vars.FAUCET_HEALTH_URL || 'https://faucet.sozu.capital/api/health' }}
+          ALERT_USDC: ${{ vars.FAUCET_ALERT_USDC || '5000' }}
+          PANIC_USDC: ${{ vars.FAUCET_PANIC_USDC || '500' }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${NTFY_TOPIC:-}" ]; then
+            echo "Missing secret NTFY_TOPIC. Add it under Settings → Secrets and variables → Actions."
+            exit 1
+          fi
+
+          BODY="$(mktemp)"
+          HTTP_CODE="$(curl -sS -o "$BODY" -w "%{http_code}" --max-time 30 "$HEALTH_URL" || true)"
+
+          if [ "$HTTP_CODE" != "200" ]; then
+            curl -sS \
+              -H "Title: Sozu Faucet DOWN" \
+              -H "Priority: urgent" \
+              -H "Tags: warning,skull" \
+              -d "Health check failed (HTTP ${HTTP_CODE:-curl-error}) at ${HEALTH_URL}" \
+              "https://ntfy.sh/${NTFY_TOPIC}"
+            echo "Notified: health down (HTTP ${HTTP_CODE})"
+            exit 0
+          fi
+
+          BAL="$(python3 -c "
+          import json, sys
+          d = json.load(open(sys.argv[1]))
+          v = (d.get('vault') or {}).get('balanceUsdc')
+          print(v if v is not None else '')
+          " "$BODY")"
+
+          if [ -z "$BAL" ]; then
+            curl -sS \
+              -H "Title: Sozu Faucet balance unreadable" \
+              -H "Priority: high" \
+              -H "Tags: warning" \
+              -d "Health OK but vault.balanceUsdc missing/null. Check treasury/RPC." \
+              "https://ntfy.sh/${NTFY_TOPIC}"
+            echo "Notified: balance unreadable"
+            exit 0
+          fi
+
+          echo "balanceUsdc=${BAL} alert=${ALERT_USDC} panic=${PANIC_USDC}"
+
+          # Compare as floats
+          IS_PANIC="$(python3 -c "print('yes' if float('$BAL') < float('$PANIC_USDC') else 'no')")"
+          IS_LOW="$(python3 -c "print('yes' if float('$BAL') < float('$ALERT_USDC') else 'no')")"
+
+          if [ "$IS_PANIC" = "yes" ]; then
+            curl -sS \
+              -H "Title: Sozu Faucet PANIC — almost empty" \
+              -H "Priority: urgent" \
+              -H "Tags: rotating_light,moneybag" \
+              -d "Treasury at ${BAL} USDC (panic < ${PANIC_USDC}). Refill now: Friendbot XLM → npm run ops:swap-usdc" \
+              "https://ntfy.sh/${NTFY_TOPIC}"
+            echo "Notified: panic"
+            exit 0
+          fi
+
+          if [ "$IS_LOW" = "yes" ]; then
+            curl -sS \
+              -H "Title: Sozu Faucet low funds" \
+              -H "Priority: high" \
+              -H "Tags: warning,moneybag" \
+              -d "Treasury at ${BAL} USDC (alert < ${ALERT_USDC}). Plan a refill soon." \
+              "https://ntfy.sh/${NTFY_TOPIC}"
+            echo "Notified: low"
+            exit 0
+          fi
+
+          echo "OK — balance ${BAL} USDC above alert threshold."
