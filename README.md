@@ -18,25 +18,41 @@ Not Friendbot (XLM). Not Circle.com’s product UI. Not Blend mint/borrow. **Soz
 
 ---
 
-## Quick start
+## Quick start (local dev)
 
 ```bash
 cp .env.example .env.local
-# set FAUCET_AUTH_SECRET, FAUCET_TREASURY_SECRET (S…)
-bun install
-bun run db:migrate
-bun run dev          # http://localhost:3010
+# Edit .env.local:
+#   FAUCET_AUTH_SECRET=local-dev-secret-at-least-16chars
+#   FAUCET_TREASURY_SECRET=S... (testnet secret key)
+#   TURNSTILE_SECRET_KEY=... (optional for dev, required for prod)
+#   NEXT_PUBLIC_TURNSTILE_SITE_KEY=... (optional)
+npm install
+npm run db:migrate
+npm run dev          # http://localhost:3010
 ```
 
-Ops (treasury XLM + USDC + smoke):
+Fund treasury (testnet):
 
 ```bash
-bun run ops:fund-xlm
-bun run ops:balance
-bun run ops:topup -- 100
+npm run ops:fund-xlm      # Friendbot XLM for fees
+npm run ops:balance       # Check vault/treasury USDC balance
+npm run ops:topup -- 100  # If using vault contract
 # with server running:
-bun run ops:smoke -- C...your-smart-account
+npm run ops:smoke -- C...your-smart-account
 ```
+
+## Testnet go-live (production deploy)
+
+See [`docs/OPS.md`](./docs/OPS.md) for the full checklist. Quick summary:
+
+1. **Secrets:** Set production env on Vercel — `FAUCET_TREASURY_SECRET`, `FAUCET_AUTH_SECRET`, Turnstile keys, `DATABASE_URL` (Turso), `ALLOWED_ORIGINS=https://faucet.sozu.capital`.
+2. **DB:** Create Turso DB → set `DATABASE_URL` + `TURSO_AUTH_TOKEN` → `npm run db:migrate`.
+3. **Deploy:** Vercel project → custom domain `faucet.sozu.capital` → verify `/api/health`.
+4. **Fund:** Friendbot treasury XLM → Circle testnet faucet for USDC → verify balance.
+5. **Smoke:** Paste a C… on live site → captcha → claim → check Stellar Expert.
+
+Mainnet is refused by config guard (`STELLAR_NETWORK=testnet` enforced).
 
 ---
 
@@ -128,15 +144,21 @@ Failed claims do **not** consume cooldown or daily budget.
 
 ## Auth (Wallet ↔ Faucet)
 
-### Mode A — preferred (implemented)
+### Mode A — JWT auth (implemented)
 
 Sozu Wallet mints a short-lived HS256 JWT with the shared `FAUCET_AUTH_SECRET` and calls claim. Faucet pays the bound `wallet` only — no arbitrary third-party addresses.
 
 See `lib/client.ts` helpers the wallet can copy/import later.
 
-### Mode B — public demo (v1.1)
+### Mode B — public paste + captcha (implemented)
 
-Captcha + strict rate limit to a pasted C…/G…. Not in v1.
+Public claim UI: paste C…/G… + Turnstile captcha + strict per-wallet cooldown.
+
+### Login with Sozu — OAuth-style handoff (planned v1.1)
+
+User clicks "Login with Sozu" → redirects to Wallet → passkey → back to faucet with short-lived JWT.
+
+See [`docs/SOZU_LOGIN_HANDOFF.md`](./docs/SOZU_LOGIN_HANDOFF.md) for implementation spec.
 
 CORS: `ALLOWED_ORIGINS` allowlist.
 

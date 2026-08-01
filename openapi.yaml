@@ -23,8 +23,13 @@ paths:
   /api/v1/faucet/claim:
     post:
       summary: Claim testnet Circle USDC SAC
+      description: |
+        **Mode A (JWT auth):** Send `Authorization: Bearer <JWT>`. Optional body `{ to }` must match JWT wallet if provided.
+        
+        **Mode B (public paste):** No auth header. Body `{ to, captchaToken }` required.
       security:
         - bearerAuth: []
+        - {}
       requestBody:
         required: false
         content:
@@ -34,10 +39,19 @@ paths:
               properties:
                 to:
                   type: string
-                  description: Must match JWT wallet when provided
+                  description: |
+                    Recipient C… or G… address.
+                    - Mode A: optional, must match JWT wallet if provided
+                    - Mode B: required
                 slug:
                   type: string
                   default: sozu-testnet
+                captchaToken:
+                  type: string
+                  description: |
+                    Cloudflare Turnstile response token.
+                    - Mode A: not used
+                    - Mode B: required
       responses:
         "200":
           description: Funded

@@ -9,7 +9,8 @@ import {
   finalizeClaim,
   nextUserAvailableAt,
 } from "@/lib/availability";
-import { getFaucetConfig } from "@/lib/config";
+import { verifyCaptcha } from "@/lib/captcha";
+import { getFaucetConfig, normalizeAddress } from "@/lib/config";
 import { optionsResponse, withCors } from "@/lib/cors";
 import {
   getDispenserBalanceMinor,
@@ -22,9 +23,17 @@ import type { FaucetClaimResponse } from "@/lib/types";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
+type ClaimBody = {
+  to?: string;
+  slug?: string;
+  captchaToken?: string;
+};
+
 /**
- * POST /v1/faucet/claim — Mode A authenticated claim.
- * Recipient is the wallet bound in the JWT (optional body.to must match).
+ * POST /v1/faucet/claim
+ *
+ * Mode A: Bearer JWT → pays the wallet bound in JWT (body.to optional, must match)
+ * Mode B: No auth + body { to, captchaToken } → public paste claim
  */
 export async function POST(request: Request) {
   try {
@@ -40,39 +49,39 @@ export async function POST(request: Request) {
     return withCors(request, Response.json(res, { status: 503 }));
   }
 
-  const auth = await resolveAuth(request);
-  if (!auth.ok) {
-    const res: FaucetClaimResponse = {
-      success: false,
-      amount: getFaucetConfig().claimAmount,
-      error: auth.error,
-      reason: auth.reason,
-    };
-    return withCors(request, Response.json(res, { status: auth.status }));
+  const cfg = getFaucetConfig();
+
+  // Parse body once
+  let body: ClaimBody = {};
+  try {
+    body = (await request.json()) as ClaimBody;
+  } catch {
+    body = {};
   }
 
-  const cfg = getFaucetConfig();
-  const { userId, walletAddress } = auth.ctx;
+  // Check slug early
+  if (body.slug && body.slug.trim().toLowerCase() !== cfg.slug) {
+    const res: FaucetClaimResponse = {
+      success: false,
+      amount: cfg.claimAmount,
+      error: `Unknown faucet slug. v1 serves only "${cfg.slug}".`,
+      reason: "inactive",
+    };
+    return withCors(request, Response.json(res, { status: 404 }));
+  }
 
-  try {
-    // Optional body.to — if present, must match auth wallet (no third-party payouts).
-    let body: { to?: string; slug?: string } = {};
-    try {
-      body = (await request.json()) as { to?: string; slug?: string };
-    } catch {
-      body = {};
-    }
+  // Try Mode A auth
+  const auth = await resolveAuth(request);
 
-    if (body.slug && body.slug.trim().toLowerCase() !== cfg.slug) {
-      const res: FaucetClaimResponse = {
-        success: false,
-        amount: cfg.claimAmount,
-        error: `Unknown faucet slug. v1 serves only "${cfg.slug}".`,
-        reason: "inactive",
-      };
-      return withCors(request, Response.json(res, { status: 404 }));
-    }
+  let userId: string;
+  let walletAddress: string;
 
+  if (auth.ok) {
+    // Mode A: authenticated JWT claim
+    userId = auth.ctx.userId;
+    walletAddress = auth.ctx.walletAddress;
+
+    // If body.to is provided, must match JWT wallet
     if (body.to) {
       const requested = body.to.trim().toUpperCase();
       if (requested !== walletAddress) {
@@ -86,7 +95,49 @@ export async function POST(request: Request) {
         return withCors(request, Response.json(res, { status: 403 }));
       }
     }
+  } else {
+    // Mode B: public paste claim requires captcha + to address
+    if (!body.to || !body.captchaToken) {
+      const res: FaucetClaimResponse = {
+        success: false,
+        amount: cfg.claimAmount,
+        error:
+          "Missing authentication. Provide Authorization: Bearer <JWT> (Mode A) or { to, captchaToken } (Mode B).",
+        reason: "unauthorized",
+      };
+      return withCors(request, Response.json(res, { status: 401 }));
+    }
 
+    // Verify captcha
+    const captchaValid = await verifyCaptcha(body.captchaToken);
+    if (!captchaValid) {
+      const res: FaucetClaimResponse = {
+        success: false,
+        amount: cfg.claimAmount,
+        error: "Captcha verification failed. Refresh and try again.",
+        reason: "unauthorized",
+      };
+      return withCors(request, Response.json(res, { status: 401 }));
+    }
+
+    // Normalize and validate address
+    try {
+      walletAddress = normalizeAddress(body.to);
+    } catch {
+      const res: FaucetClaimResponse = {
+        success: false,
+        amount: cfg.claimAmount,
+        error: `Invalid Stellar address: ${body.to}. Provide a valid C… or G… address.`,
+        reason: "invalid_address",
+      };
+      return withCors(request, Response.json(res, { status: 400 }));
+    }
+
+    // Synthesize anon userId for cooldown binding
+    userId = `anon:${walletAddress}`;
+  }
+
+  try {
     const availability = await computeAvailability({
       userId,
       walletAddress,
