@@ -1,0 +1,37 @@
+{
+  "name": "sozu-faucet",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Sozu Faucet — Friendbot-like one-click Circle USDC SAC on Stellar testnet",
+  "scripts": {
+    "dev": "next dev --port 3010",
+    "build": "next build",
+    "start": "next start --port 3010",
+    "lint": "eslint .",
+    "db:migrate": "node --import tsx scripts/migrate.ts",
+    "ops:fund-xlm": "bash scripts/fund-treasury-xlm.sh",
+    "ops:balance": "node --import tsx scripts/check-balance.ts",
+    "ops:topup": "node --import tsx scripts/topup-usdc.ts",
+    "ops:smoke": "node --import tsx scripts/smoke-claim.ts"
+  },
+  "dependencies": {
+    "@libsql/client": "^0.15.15",
+    "@stellar/stellar-sdk": "^14.3.0",
+    "drizzle-orm": "^0.44.5",
+    "jose": "^6.0.12",
+    "next": "^16.0.7",
+    "react": "19.2.0",
+    "react-dom": "19.2.0",
+    "zod": "^4.1.5"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.1",
+    "@types/react": "^19.0.8",
+    "@types/react-dom": "^19.0.3",
+    "tsx": "^4.20.5",
+    "typescript": "^5.7.3"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

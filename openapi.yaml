@@ -1,0 +1,123 @@
+openapi: 3.1.0
+info:
+  title: Sozu Faucet API
+  version: 0.1.0
+  description: Friendbot-like Circle USDC SAC faucet for Stellar testnet.
+servers:
+  - url: http://localhost:3010
+    description: Local
+paths:
+  /api/v1/faucet/status:
+    get:
+      summary: Faucet identity + availability
+      security:
+        - bearerAuth: []
+        - {}
+      responses:
+        "200":
+          description: Status payload
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusResponse"
+  /api/v1/faucet/claim:
+    post:
+      summary: Claim testnet Circle USDC SAC
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                to:
+                  type: string
+                  description: Must match JWT wallet when provided
+                slug:
+                  type: string
+                  default: sozu-testnet
+      responses:
+        "200":
+          description: Funded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClaimSuccess"
+        "409":
+          description: Cooldown / empty day
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClaimFailure"
+        "503":
+          description: Vault empty or misconfigured
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClaimFailure"
+  /api/health:
+    get:
+      summary: Ops health
+      responses:
+        "200":
+          description: Health
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    StatusResponse:
+      type: object
+      required: [faucet, availability]
+      properties:
+        faucet:
+          type: object
+          properties:
+            slug: { type: string }
+            name: { type: string }
+            claimAmount: { type: number }
+            dailyLimit: { type: number }
+            status: { type: string, enum: [active, inactive] }
+            asset: { type: string, enum: [circle_usdc_sac] }
+            network: { type: string, enum: [testnet] }
+            cooldownMinutes: { type: number }
+        availability:
+          type: object
+          properties:
+            available: { type: boolean }
+            reason:
+              type: string
+              enum:
+                [
+                  inactive,
+                  empty_today,
+                  insufficient_vault,
+                  global_cooldown,
+                  user_cooldown,
+                ]
+            remainingToday: { type: number }
+            nextAvailableAt: { type: string, format: date-time }
+    ClaimSuccess:
+      type: object
+      required: [success, amount, asset, network, to, txHash, nextAvailableAt]
+      properties:
+        success: { type: boolean, enum: [true] }
+        amount: { type: number }
+        asset: { type: string, enum: [circle_usdc_sac] }
+        network: { type: string, enum: [testnet] }
+        to: { type: string }
+        txHash: { type: string }
+        nextAvailableAt: { type: string, format: date-time }
+    ClaimFailure:
+      type: object
+      required: [success, amount, error, reason]
+      properties:
+        success: { type: boolean, enum: [false] }
+        amount: { type: number }
+        error: { type: string }
+        reason: { type: string }
+        nextAvailableAt: { type: string, format: date-time }
