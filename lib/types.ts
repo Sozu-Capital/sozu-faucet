@@ -16,7 +16,8 @@ export type ClaimFailureReason =
   | "payment_failed"
   | "unauthorized"
   | "invalid_address"
-  | "mainnet_refused";
+  | "mainnet_refused"
+  | "rate_limited";
 
 export type FaucetPublic = {
   slug: string;

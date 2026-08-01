@@ -1,9 +1,13 @@
 # Sozu Faucet
 
-Friendbot-like **one-click** testnet **Circle USDC (SAC)** for Sozu wallets.
+Friendbot-like testnet **Circle USDC (SAC)** — one click in the browser, or **one terminal command**.
+
+```bash
+npx @sozu/faucet claim CABC...YOUR...ADDRESS
+```
 
 ```
-Wallet / UI  →  Sozu Faucet API  →  Treasury / Vault  →  Circle USDC SAC → C… (or G…)
+CLI / Wallet / UI  →  Sozu Faucet API  →  Treasury / Vault  →  Circle USDC SAC → C… (or G…)
 ```
 
 Not Friendbot (XLM). Not Circle.com’s product UI. Not Blend mint/borrow. **Sozu-owned**, API-first, embeddable.
@@ -12,7 +16,7 @@ Not Friendbot (XLM). Not Circle.com’s product UI. Not Blend mint/borrow. **Soz
 |---|---|---|---|---|
 | Asset | XLM | USDC (multi-chain) | BlendUSDC / pool | **Circle USDC SAC** |
 | Network | Stellar testnet | Various | Stellar testnet | **Stellar testnet only** |
-| UX | One click → funded | Form + rate limits | Mint/borrow steps | **One intentional click** |
+| UX | One `curl` | Form + captcha | Mint/borrow steps | **`npx` / one click / wallet** |
 | Owner | SDF | Circle | Blend | **Sozu** |
 | Embed | Horizon URL | External site | App-specific | **Wallet `POST /claim`** |
 
@@ -87,9 +91,21 @@ Public. Optional `Authorization: Bearer <JWT>` adds user cooldown.
 
 Reasons: `inactive | empty_today | insufficient_vault | global_cooldown | user_cooldown`
 
+### `POST /api/v1/faucet/pow/challenge`
+
+Mint a single-use PoW ticket for Mode C (terminal / `npx @sozu/faucet`).
+
+```bash
+curl -sS -X POST http://localhost:3010/api/v1/faucet/pow/challenge \
+  -H "Content-Type: application/json" \
+  -d '{"to":"C…"}'
+```
+
 ### `POST /api/v1/faucet/claim`
 
-**Mode A (required for v1):** Bearer JWT signed with `FAUCET_AUTH_SECRET`.
+**Mode A:** Bearer JWT signed with `FAUCET_AUTH_SECRET` (wallet embed).  
+**Mode B:** `{ to, captchaToken }` (browser).  
+**Mode C:** `{ to, pow: { challengeId, nonce } }` (CLI / agents — preferred public path).
 
 JWT claims:
 
@@ -136,9 +152,26 @@ Ops: vault/treasury balance, `canCoverClaim`, daily remaining.
 | Per-user / per-wallet cooldown | **120 minutes** (Circle-like) | `FAUCET_COOLDOWN_MINUTES` |
 | Daily budget | 5000 USDC | `FAUCET_DAILY_LIMIT` |
 | Global gap between claims | off | `FAUCET_GLOBAL_COOLDOWN_MINUTES` |
+| PoW difficulty (Mode C) | 20 leading zero bits | `FAUCET_POW_DIFFICULTY` |
+| PoW challenge TTL | 300s | `FAUCET_POW_TTL_SECONDS` |
+| PoW challenges / IP / min | 10 | `FAUCET_POW_CHALLENGE_PER_IP_PER_MIN` |
 | Soft abuse signals | IP hash + UA hash | `FAUCET_HASH_SALT` |
 
 Failed claims do **not** consume cooldown or daily budget.
+
+---
+
+## Terminal / agents (Mode C)
+
+```bash
+npx @sozu/faucet claim <C_OR_G_ADDRESS>
+# local faucet:
+npx @sozu/faucet claim <C_OR_G_ADDRESS> --url http://localhost:3010
+```
+
+Package lives in [`packages/faucet-cli`](./packages/faucet-cli). Publish to npm as `@sozu/faucet` for public `npx`.
+
+On the site: enter address → **Copy prompt** → paste into an agent (same one-liner).
 
 ---
 
@@ -154,10 +187,9 @@ See `lib/client.ts` helpers the wallet can copy/import later.
 
 Public claim UI: paste C…/G… + Turnstile captcha + strict per-wallet cooldown.
 
-### Copy prompt — pre-authorized agent handoff (implemented)
+### Mode C — PoW + CLI (implemented)
 
-On the faucet page: resolve C…/G… (or $sozutag) → captcha → **Copy prompt**.
-Server mints a ~5-minute Mode A JWT via `POST /api/v1/faucet/prompt-token` and puts an exact claim curl on the clipboard. Agents never need `FAUCET_AUTH_SECRET` or Turnstile.
+Public terminal path: `POST /pow/challenge` → solve SHA-256 puzzle → `POST /claim` with `{ to, pow }`. Abuse cost is CPU time; wallet cooldown + daily budget still apply.
 
 Agent docs (live): `/agents.md`, `/llms.txt`.
 

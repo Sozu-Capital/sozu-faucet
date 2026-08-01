@@ -18,6 +18,7 @@ import {
   sendFaucetPayment,
   vaultCanCoverClaim,
 } from "@/lib/payout";
+import { consumePowProof } from "@/lib/pow";
 import { minorToUsdc } from "@/lib/config";
 import type { FaucetClaimResponse } from "@/lib/types";
 
@@ -28,6 +29,10 @@ type ClaimBody = {
   to?: string;
   slug?: string;
   captchaToken?: string;
+  pow?: {
+    challengeId?: string;
+    nonce?: string;
+  };
 };
 
 /**
@@ -35,6 +40,7 @@ type ClaimBody = {
  *
  * Mode A: Bearer JWT → pays the wallet bound in JWT (body.to optional, must match)
  * Mode B: No auth + body { to, captchaToken } → public paste claim
+ * Mode C: No auth + body { to, pow: { challengeId, nonce } } → terminal / agent
  */
 export async function POST(request: Request) {
   try {
@@ -96,20 +102,28 @@ export async function POST(request: Request) {
         return withCors(request, Response.json(res, { status: 403 }));
       }
     }
-  } else {
-    // Mode B: public paste claim requires captcha + to address
-    if (!body.to || !body.captchaToken) {
+  } else if (body.to && body.pow?.challengeId && body.pow?.nonce) {
+    // Mode C: PoW ticket (npx @sozu/faucet / agents)
+    const pow = await consumePowProof({
+      to: body.to,
+      pow: {
+        challengeId: body.pow.challengeId,
+        nonce: body.pow.nonce,
+      },
+    });
+    if (!pow.ok) {
       const res: FaucetClaimResponse = {
         success: false,
         amount: cfg.claimAmount,
-        error:
-          "Missing authentication. Provide Authorization: Bearer <JWT> (Mode A) or { to, captchaToken } (Mode B).",
-        reason: "unauthorized",
+        error: pow.error,
+        reason: pow.reason === "invalid_address" ? "invalid_address" : "unauthorized",
       };
-      return withCors(request, Response.json(res, { status: 401 }));
+      return withCors(request, Response.json(res, { status: pow.status }));
     }
-
-    // Verify captcha
+    walletAddress = pow.walletAddress;
+    userId = anonUserId(walletAddress);
+  } else if (body.to && body.captchaToken) {
+    // Mode B: public paste claim requires captcha + to address
     const captchaValid = await verifyCaptcha(body.captchaToken);
     if (!captchaValid) {
       const res: FaucetClaimResponse = {
@@ -121,7 +135,6 @@ export async function POST(request: Request) {
       return withCors(request, Response.json(res, { status: 401 }));
     }
 
-    // Normalize and validate address
     try {
       walletAddress = normalizeAddress(body.to);
     } catch {
@@ -134,8 +147,16 @@ export async function POST(request: Request) {
       return withCors(request, Response.json(res, { status: 400 }));
     }
 
-    // Synthesize anon userId for cooldown binding (shared with prompt-token)
     userId = anonUserId(walletAddress);
+  } else {
+    const res: FaucetClaimResponse = {
+      success: false,
+      amount: cfg.claimAmount,
+      error:
+        "Missing authentication. Provide Authorization: Bearer <JWT> (Mode A), { to, captchaToken } (Mode B), or { to, pow } (Mode C).",
+      reason: "unauthorized",
+    };
+    return withCors(request, Response.json(res, { status: 401 }));
   }
 
   try {

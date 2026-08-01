@@ -27,14 +27,6 @@ type ClaimPayload = {
   nextAvailableAt?: string;
 };
 
-type PromptTokenPayload = {
-  prompt?: string;
-  error?: string;
-  reason?: string;
-  nextAvailableAt?: string;
-  expiresInSeconds?: number;
-};
-
 function isValidStellarAddress(addr: string): boolean {
   return /^[CG][A-Z0-9]{55}$/.test(addr.trim().toUpperCase());
 }
@@ -117,9 +109,7 @@ export default function HomePage() {
   const [captchaToken, setCaptchaToken] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
   const [resolving, setResolving] = useState(false);
-  const [mintingPrompt, setMintingPrompt] = useState(false);
-  const [promptPreview, setPromptPreview] = useState<string | null>(null);
-  const [promptError, setPromptError] = useState<string | null>(null);
+  const [copiedPrompt, setCopiedPrompt] = useState(false);
   const closedVideoRef = useRef<HTMLVideoElement>(null);
   const openVideoRef = useRef<HTMLVideoElement>(null);
   const [baseUrl, setBaseUrl] = useState(
@@ -162,7 +152,6 @@ export default function HomePage() {
     if (!trimmed) {
       setResolvedWallet(null);
       setWalletStatus(null);
-      setPromptPreview(null);
       return;
     }
 
@@ -363,90 +352,59 @@ export default function HomePage() {
         ? `Unavailable (${reason}). Next available: ${when}.`
         : `Unavailable (${reason}).`;
     }
-    if (captchaConfigured && !captchaToken) {
-      return "Complete captcha, then copy — mints a 5-minute claim token.";
-    }
     return null;
   })();
 
-  const canCopyPrompt =
-    !!resolvedWallet &&
-    !walletOnCooldown &&
-    !resolving &&
-    !mintingPrompt &&
-    (!captchaConfigured || !!captchaToken);
+  const canCopyPrompt = !!resolvedWallet && !walletOnCooldown && !resolving;
+
+  function buildAgentPromptText(wallet: string): string {
+    const origin =
+      baseUrl ||
+      process.env.NEXT_PUBLIC_FAUCET_PUBLIC_URL ||
+      "https://faucet.sozu.capital";
+    const isLocal =
+      origin.includes("localhost") || origin.includes("127.0.0.1");
+    const urlFlag = isLocal ? ` --url ${origin.replace(/\/$/, "")}` : "";
+    return `Claim ${claimAmount} testnet USDC (Circle SAC) from Sozu Faucet for ${wallet}.
+
+Run this single command (solves a short PoW, then claims — no browser):
+
+npx @sozu/faucet@latest claim ${wallet}${urlFlag}
+
+Print the JSON. On success, open:
+https://stellar.expert/explorer/testnet/contract/${wallet}`;
+  }
 
   async function copyAgentPrompt() {
-    setPromptError(null);
     if (!canCopyPrompt || !resolvedWallet) return;
-
-    setMintingPrompt(true);
+    const prompt = buildAgentPromptText(resolvedWallet);
     try {
-      const res = await fetch("/api/v1/faucet/prompt-token", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          walletAddress: resolvedWallet,
-          captchaToken: captchaToken ?? undefined,
-        }),
-      });
-      const data = (await res.json()) as PromptTokenPayload;
-
-      if (!res.ok || !data.prompt) {
-        const when = data.nextAvailableAt
-          ? ` Next available: ${formatCountdown(data.nextAvailableAt)}.`
-          : "";
-        setPromptError(
-          `${data.error ?? "Could not mint prompt token"}${when}`,
-        );
-        if (data.nextAvailableAt) {
-          setWalletStatus((prev) =>
-            prev
-              ? {
-                  ...prev,
-                  availability: {
-                    ...prev.availability,
-                    available: false,
-                    reason: data.reason,
-                    nextAvailableAt: data.nextAvailableAt,
-                  },
-                }
-              : prev,
-          );
-        }
-        resetTurnstile(setCaptchaToken);
-        return;
-      }
-
-      setPromptPreview(data.prompt);
-      await navigator.clipboard.writeText(data.prompt);
+      await navigator.clipboard.writeText(prompt);
+      setCopiedPrompt(true);
       setCopied("agent-prompt");
-      setTimeout(() => setCopied(null), 2500);
-      resetTurnstile(setCaptchaToken);
-    } catch (err) {
-      setPromptError(
-        err instanceof Error ? err.message : "Could not mint prompt token",
-      );
-    } finally {
-      setMintingPrompt(false);
+      setTimeout(() => {
+        setCopied(null);
+        setCopiedPrompt(false);
+      }, 2500);
+    } catch {
+      setMessage({
+        kind: "err",
+        text: "Could not copy to clipboard.",
+      });
     }
   }
 
-  const idlePromptPreview = resolvedWallet
-    ? `Claim ${claimAmount} testnet USDC from Sozu Faucet (token expires in ~5m):
+  const agentPromptPreview = resolvedWallet
+    ? buildAgentPromptText(resolvedWallet)
+    : `Enter a recipient above, then Copy prompt.
 
-curl -sS -X POST ${baseUrl}/api/v1/faucet/claim \\
-  -H "Authorization: Bearer <minted-on-copy>" \\
-  -H "Content-Type: application/json" \\
-  -d '{"to":"${resolvedWallet}"}'
+Clipboard will contain one command:
 
-Print the JSON. On success, open:
-https://stellar.expert/explorer/testnet/contract/${resolvedWallet}`
-    : `Enter a recipient above, complete captcha, then Copy prompt.
-Clipboard will contain a working Mode A claim curl (address + 5-minute Bearer token).
-No secrets to hunt. No captcha for the agent.
+npx @sozu/faucet@latest claim <ADDRESS>
 
-Docs: ${baseUrl}/agents.md`;
+No captcha. No JWT. Agent runs one shell command.
+
+Docs: ${baseUrl || "https://faucet.sozu.capital"}/agents.md`;
 
   return (
     <>
@@ -457,7 +415,7 @@ Docs: ${baseUrl}/agents.md`;
         <video
           ref={closedVideoRef}
           className="bg-video__layer bg-video__layer--closed"
-          src="/faucet_closed_dithered.mp4"
+          src="faucet_closed_dithered.mp4"
           muted
           loop
           playsInline
@@ -467,7 +425,7 @@ Docs: ${baseUrl}/agents.md`;
         <video
           ref={openVideoRef}
           className="bg-video__layer bg-video__layer--open"
-          src="/faucet_open_dithered.mp4"
+          src="faucet_open_dithered.mp4"
           muted
           loop
           playsInline
@@ -479,7 +437,8 @@ Docs: ${baseUrl}/agents.md`;
       <main>
       <h1>Sozu Faucet</h1>
       <p className="lede">
-        Get test USDC (SAC) in one click, or tell your agent to get the cash for you
+        Get test USDC (SAC) in one click — or one{" "}
+        <code style={{ fontSize: "0.92em" }}>npx @sozu/faucet</code> command
       </p>
 
       <div className="panel">
@@ -490,19 +449,17 @@ Docs: ${baseUrl}/agents.md`;
               value={recipientInput}
               onChange={(e) => {
                 setRecipientInput(e.target.value);
-                setPromptPreview(null);
-                setPromptError(null);
               }}
               placeholder="C…, G…, or $sozutag"
               autoComplete="off"
               spellCheck={false}
-              disabled={pending || resolving || mintingPrompt}
+              disabled={pending || resolving}
               style={{ flex: 1 }}
             />
             <button
               type="button"
               className="login-btn"
-              disabled={pending || resolving || mintingPrompt}
+              disabled={pending || resolving}
               onClick={() => {
                 setMessage({
                   kind: "err",
@@ -539,7 +496,7 @@ Docs: ${baseUrl}/agents.md`;
 
         <button
           type="button"
-          disabled={pending || resolving || mintingPrompt}
+          disabled={pending || resolving}
           onClick={claim}
           style={{ marginTop: "0.5rem" }}
         >
@@ -603,23 +560,21 @@ Docs: ${baseUrl}/agents.md`;
       <div className="agent-section">
         <h2>For agents & automation</h2>
         <p>
-          Copy a pre-authorized claim prompt — address + short-lived Bearer
-          token. Agent runs one curl.
+          One shell command. The CLI solves a short proof-of-work, then claims —
+          no browser, no captcha.
         </p>
         <div className="agent-prompt">
-          <pre>{promptPreview ?? idlePromptPreview}</pre>
+          <pre>{agentPromptPreview}</pre>
           <button
             type="button"
             className="copy-btn-small"
             disabled={!canCopyPrompt}
             onClick={() => void copyAgentPrompt()}
-            title={copyBlockedReason ?? "Mint JWT and copy claim curl"}
+            title={copyBlockedReason ?? "Copy npx claim prompt"}
           >
-            {mintingPrompt
-              ? "Minting…"
-              : copied === "agent-prompt"
-                ? "Copied!"
-                : "Copy prompt"}
+            {copiedPrompt || copied === "agent-prompt"
+              ? "Copied!"
+              : "Copy prompt"}
           </button>
         </div>
         {copyBlockedReason && (
@@ -631,15 +586,6 @@ Docs: ${baseUrl}/agents.md`;
             }}
           >
             {copyBlockedReason}
-          </p>
-        )}
-        {promptError && (
-          <p
-            className="status err"
-            style={{ marginTop: "0.65rem" }}
-            role="status"
-          >
-            {promptError}
           </p>
         )}
       </div>

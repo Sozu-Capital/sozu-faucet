@@ -76,5 +76,26 @@ export async function ensureMigrated(): Promise<void> {
      ON faucet_claims (user_id, status, claimed_at)`,
   );
 
+  await client.execute(`
+    CREATE TABLE IF NOT EXISTS faucet_pow_challenges (
+      id TEXT PRIMARY KEY NOT NULL,
+      wallet_address TEXT NOT NULL,
+      difficulty INTEGER NOT NULL,
+      prefix TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      consumed_at TEXT,
+      ip_hash TEXT,
+      created_at TEXT NOT NULL
+    )
+  `);
+  await client.execute(
+    `CREATE INDEX IF NOT EXISTS idx_pow_ip_created
+     ON faucet_pow_challenges (ip_hash, created_at)`,
+  );
+  await client.execute(
+    `CREATE INDEX IF NOT EXISTS idx_pow_wallet_created
+     ON faucet_pow_challenges (wallet_address, created_at)`,
+  );
+
   cached!.migrated = true;
 }

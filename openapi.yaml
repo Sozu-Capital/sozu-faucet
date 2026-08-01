@@ -54,13 +54,47 @@ paths:
           description: Captcha missing or failed
         "409":
           description: Wallet on cooldown / unavailable
+  /api/v1/faucet/pow/challenge:
+    post:
+      summary: Mint a Mode C PoW challenge
+      description: |
+        Single-use ticket bound to `to`. CLI (`npx @sozu/faucet`) solves locally then claims.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [to]
+              properties:
+                to:
+                  type: string
+                  description: Recipient C… or G… address
+      responses:
+        "200":
+          description: Challenge ticket
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [challengeId, to, difficulty, prefix, expiresAt]
+                properties:
+                  challengeId: { type: string }
+                  to: { type: string }
+                  difficulty: { type: integer }
+                  prefix: { type: string }
+                  expiresAt: { type: string, format: date-time }
+        "429":
+          description: IP rate limited
   /api/v1/faucet/claim:
     post:
       summary: Claim testnet Circle USDC SAC
       description: |
         **Mode A (JWT auth):** Send `Authorization: Bearer <JWT>`. Optional body `{ to }` must match JWT wallet if provided.
-        
+
         **Mode B (public paste):** No auth header. Body `{ to, captchaToken }` required.
+
+        **Mode C (PoW / CLI):** No auth header. Body `{ to, pow: { challengeId, nonce } }` required.
       security:
         - bearerAuth: []
         - {}
@@ -76,7 +110,7 @@ paths:
                   description: |
                     Recipient C… or G… address.
                     - Mode A: optional, must match JWT wallet if provided
-                    - Mode B: required
+                    - Mode B / Mode C: required
                 slug:
                   type: string
                   default: sozu-testnet
@@ -86,6 +120,12 @@ paths:
                     Cloudflare Turnstile response token.
                     - Mode A: not used
                     - Mode B: required
+                pow:
+                  type: object
+                  description: Mode C proof-of-work ticket solution
+                  properties:
+                    challengeId: { type: string }
+                    nonce: { type: string }
       responses:
         "200":
           description: Funded

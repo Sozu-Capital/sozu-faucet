@@ -64,6 +64,13 @@ export function getFaucetConfig() {
     /** Per-user / per-wallet cooldown. Default 120m (Circle-like). */
     cooldownMinutes: envNumber("FAUCET_COOLDOWN_MINUTES", 120),
     globalCooldownMinutes: envNumber("FAUCET_GLOBAL_COOLDOWN_MINUTES", 0),
+    /**
+     * Mode C PoW: leading zero bits on SHA-256(prefix:id:to:nonce).
+     * ~20 ≈ a few seconds on a laptop CPU.
+     */
+    powDifficulty: envNumber("FAUCET_POW_DIFFICULTY", 20),
+    powTtlSeconds: envNumber("FAUCET_POW_TTL_SECONDS", 300),
+    powChallengePerIpPerMin: envNumber("FAUCET_POW_CHALLENGE_PER_IP_PER_MIN", 10),
     status: "active" as const,
     asset: "circle_usdc_sac" as const,
     network: "testnet" as const,

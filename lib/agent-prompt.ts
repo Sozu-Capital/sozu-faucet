@@ -1,5 +1,27 @@
-/** Clipboard / agent paste: one Mode A claim curl, no scavenger notes. */
+/** Clipboard / agent paste: one npx claim command (Mode C PoW). */
 
+export function buildNpxAgentPrompt(params: {
+  wallet: string;
+  claimAmount: number;
+  faucetUrl?: string;
+}): string {
+  const wallet = params.wallet.trim().toUpperCase();
+  const expert = `https://stellar.expert/explorer/testnet/contract/${wallet}`;
+  const urlFlag = params.faucetUrl
+    ? ` --url ${params.faucetUrl.replace(/\/$/, "")}`
+    : "";
+
+  return `Claim ${params.claimAmount} testnet USDC (Circle SAC) from Sozu Faucet for ${wallet}.
+
+Run this single command (solves a short PoW, then claims — no browser):
+
+npx @sozu/faucet@latest claim ${wallet}${urlFlag}
+
+Print the JSON. On success, open:
+${expert}`;
+}
+
+/** @deprecated Prefer buildNpxAgentPrompt — JWT curl handoff is no longer the happy path. */
 export function buildAgentClaimPrompt(params: {
   baseUrl: string;
   token: string;
@@ -23,7 +45,7 @@ Print the JSON. On success, open:
 ${expert}`;
 }
 
-/** Stable Mode B / prompt-token identity so cooldown is shared with paste claims. */
+/** Stable Mode B / Mode C / prompt-token identity so cooldown is shared. */
 export function anonUserId(walletAddress: string): string {
   return `anon:${walletAddress.trim().toUpperCase()}`;
 }

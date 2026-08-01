@@ -1,0 +1,41 @@
+{
+  "name": "@sozu/faucet",
+  "version": "0.1.1",
+  "description": "Claim testnet Circle USDC (SAC) from Sozu Faucet — one command, PoW-gated",
+  "type": "module",
+  "bin": {
+    "sozu-faucet": "bin/sozu-faucet.js"
+  },
+  "files": [
+    "bin",
+    "lib",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "stellar",
+    "usdc",
+    "faucet",
+    "soroban",
+    "sozu"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sozucapital/sozu-faucet.git",
+    "directory": "packages/faucet-cli"
+  },
+  "homepage": "https://faucet.sozu.capital",
+  "bugs": {
+    "url": "https://github.com/sozucapital/sozu-faucet/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "pack:check": "npm pack --dry-run",
+    "prepublishOnly": "node --check bin/sozu-faucet.js && node --check lib/pow.js"
+  }
+}

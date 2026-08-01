@@ -3,7 +3,7 @@ import { getFaucetConfig } from "@/lib/config";
 export const dynamic = "force-dynamic";
 
 /**
- * GET /agents.md — agent-readable faucet docs (fallback; happy path is Copy prompt).
+ * GET /agents.md — agent-readable faucet docs.
  */
 export async function GET(request: Request) {
   let claimAmount = 20;
@@ -22,6 +22,9 @@ export async function GET(request: Request) {
   }
 
   const origin = new URL(request.url).origin;
+  const isLocal =
+    origin.includes("localhost") || origin.includes("127.0.0.1");
+  const urlFlag = isLocal ? ` --url ${origin}` : "";
 
   const body = `# Sozu Faucet — Agent guide
 
@@ -29,11 +32,30 @@ Testnet Circle USDC (SAC). Base: \`${origin}\`
 
 ## Happy path (preferred)
 
-On ${origin}, enter a C…/G… (or $sozutag), complete captcha, click **Copy prompt**.
-Paste into your agent. The clipboard already contains a short-lived Mode A JWT + exact claim curl.
-**Do not hunt for secrets. Do not solve Turnstile. One curl.**
+One shell command. No browser. No captcha. No JWT.
 
-## Mode A — Bearer JWT (automation)
+\`\`\`bash
+npx @sozu/faucet@latest claim <C_OR_G_ADDRESS>${urlFlag}
+\`\`\`
+
+The CLI: mints a PoW challenge → solves it locally (~a few seconds) → claims.
+Paste into your agent as a single action. Print the JSON.
+
+On the site: enter address → **Copy prompt** → paste into agent (same command).
+
+## Mode C — PoW (what the CLI uses)
+
+1. \`POST ${origin}/api/v1/faucet/pow/challenge\` body \`{"to":"<WALLET>"}\`
+2. Solve: SHA-256(\`prefix:challengeId:to:nonce\`) with \`difficulty\` leading zero bits
+3. \`POST ${origin}/api/v1/faucet/claim\` body:
+
+\`\`\`json
+{"to":"<WALLET>","pow":{"challengeId":"<id>","nonce":"<n>"}}
+\`\`\`
+
+Prefer the CLI over hand-rolling this.
+
+## Mode A — Bearer JWT (wallet embed)
 
 \`\`\`bash
 curl -sS -X POST ${origin}/api/v1/faucet/claim \\
@@ -42,11 +64,9 @@ curl -sS -X POST ${origin}/api/v1/faucet/claim \\
   -d '{"to":"<WALLET_BOUND_IN_JWT>"}'
 \`\`\`
 
-- JWT is HS256, claims: \`sub\` (user id), \`wallet\` (C…/G…), short \`exp\` (~5m for prompt tokens).
-- Optional body \`to\` must match the JWT wallet.
-- Wallet apps mint with shared \`FAUCET_AUTH_SECRET\`. Browser **Copy prompt** mints via \`POST /api/v1/faucet/prompt-token\` (captcha-gated) — agents never call that.
+Wallet apps mint with shared \`FAUCET_AUTH_SECRET\`.
 
-## Mode B — public paste + captcha (humans in browser)
+## Mode B — browser + captcha (humans on the site)
 
 \`\`\`bash
 curl -sS -X POST ${origin}/api/v1/faucet/claim \\
@@ -54,7 +74,7 @@ curl -sS -X POST ${origin}/api/v1/faucet/claim \\
   -d '{"to":"<C_OR_G_ADDRESS>","captchaToken":"<TURNSTILE_TOKEN>"}'
 \`\`\`
 
-Agents cannot obtain a Turnstile token. Use Mode A / Copy prompt instead.
+Agents cannot obtain a Turnstile token. Use Mode C / \`npx @sozu/faucet\`.
 
 ## Status
 

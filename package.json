@@ -12,7 +12,10 @@
     "ops:fund-xlm": "bash scripts/fund-treasury-xlm.sh",
     "ops:balance": "node --import tsx scripts/check-balance.ts",
     "ops:topup": "node --import tsx scripts/topup-usdc.ts",
-    "ops:smoke": "node --import tsx scripts/smoke-claim.ts"
+    "ops:smoke": "node --import tsx scripts/smoke-claim.ts",
+    "faucet:claim": "node packages/faucet-cli/bin/sozu-faucet.js claim",
+    "faucet:pack": "npm run pack:check --prefix packages/faucet-cli",
+    "faucet:publish": "cd packages/faucet-cli && npm publish --access public"
   },
   "dependencies": {
     "@libsql/client": "^0.15.15",

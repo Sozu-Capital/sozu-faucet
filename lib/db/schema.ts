@@ -17,3 +17,18 @@ export const faucetClaims = sqliteTable("faucet_claims", {
 
 export type FaucetClaimRow = typeof faucetClaims.$inferSelect;
 export type NewFaucetClaim = typeof faucetClaims.$inferInsert;
+
+/** Single-use PoW tickets for terminal / agent Mode C claims. */
+export const faucetPowChallenges = sqliteTable("faucet_pow_challenges", {
+  id: text("id").primaryKey(),
+  walletAddress: text("wallet_address").notNull(),
+  difficulty: integer("difficulty").notNull(),
+  prefix: text("prefix").notNull(),
+  expiresAt: text("expires_at").notNull(),
+  consumedAt: text("consumed_at"),
+  ipHash: text("ip_hash"),
+  createdAt: text("created_at").notNull(),
+});
+
+export type FaucetPowChallengeRow = typeof faucetPowChallenges.$inferSelect;
+export type NewFaucetPowChallenge = typeof faucetPowChallenges.$inferInsert;
