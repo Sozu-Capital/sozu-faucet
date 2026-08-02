@@ -80,13 +80,29 @@ export function clearSession(): void {
   sessionStorage.removeItem(FAUCET_SESSION_KEY);
 }
 
-export function walletHandoffUrl(returnUrl: string): string {
-  const walletOrigin = (
-    process.env.NEXT_PUBLIC_WALLET_URL || "https://wallet.sozu.capital"
+/** Sozu App origin for Redirect Handoff (v1). Override with NEXT_PUBLIC_WALLET_URL. */
+export function sozuAppOrigin(): string {
+  return (
+    process.env.NEXT_PUBLIC_WALLET_URL || "https://app.sozu.capital"
   ).replace(/\/$/, "");
-  const url = new URL(`${walletOrigin}/auth/faucet-handoff`);
+}
+
+export function walletHandoffUrl(returnUrl: string): string {
+  const url = new URL(`${sozuAppOrigin()}/auth/faucet-handoff`);
   url.searchParams.set("return", returnUrl);
   return url.toString();
+}
+
+/**
+ * Ensure Auto-Claim on Return runs once per Mode A token (React Strict Mode safe).
+ * Returns true if this tab should fire the claim.
+ */
+export function takeHandoffAutoClaimSlot(token: string): boolean {
+  if (typeof window === "undefined") return false;
+  const key = "sozu.faucet.handoffAutoClaim";
+  if (sessionStorage.getItem(key) === token) return false;
+  sessionStorage.setItem(key, token);
+  return true;
 }
 
 /** Short display: CABC…WXYZ */

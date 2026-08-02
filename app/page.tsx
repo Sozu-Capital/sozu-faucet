@@ -7,6 +7,7 @@ import {
   readStoredSession,
   shortAddress,
   storeSession,
+  takeHandoffAutoClaimSlot,
   walletHandoffUrl,
   type FaucetSession,
 } from "@/lib/faucet-session";
@@ -102,6 +103,27 @@ function resetTurnstile(setCaptchaToken: (t: string | null) => void) {
   }
 }
 
+function modeAClaimErrorText(body: ClaimPayload): string {
+  const when = body.nextAvailableAt
+    ? ` Next available: ${formatCountdown(body.nextAvailableAt)}.`
+    : "";
+  switch (body.reason) {
+    case "user_cooldown":
+    case "global_cooldown":
+      return `You're on cooldown — try again later.${when}`;
+    case "empty_today":
+      return `Daily faucet budget is used up.${when}`;
+    case "insufficient_vault":
+      return "Faucet treasury is empty right now. Try again after we refill.";
+    case "inactive":
+      return "Faucet is temporarily inactive.";
+    case "unauthorized":
+      return "Session expired, log in again.";
+    default:
+      return `${body.error ?? "Claim failed"}${body.reason ? ` (${body.reason})` : ""}.${when}`;
+  }
+}
+
 export default function HomePage() {
   const [recipientInput, setRecipientInput] = useState("");
   const [resolvedWallet, setResolvedWallet] = useState<string | null>(null);
@@ -135,7 +157,8 @@ export default function HomePage() {
     setBaseUrl(window.location.origin);
   }, []);
 
-  // Login with Sozu: consume ?token= from Wallet handoff, or restore sessionStorage.
+  // Login with Sozu: consume ?token= from App handoff, or restore sessionStorage.
+  // Fresh handoff tokens trigger Auto-Claim on Return (ADR 0001).
   useEffect(() => {
     const url = new URL(window.location.href);
     const tokenFromUrl = url.searchParams.get("token");
@@ -147,12 +170,16 @@ export default function HomePage() {
         setSession(next);
         setResolvedWallet(next.walletAddress);
         setRecipientInput(next.walletAddress);
+        if (takeHandoffAutoClaimSlot(next.token)) {
+          void runModeAClaim(next);
+        }
         return;
       }
       setMessage({
         kind: "err",
         text: "Login token was invalid or expired. Try Login with Sozu again.",
       });
+      return;
     }
 
     const stored = readStoredSession();
@@ -161,6 +188,7 @@ export default function HomePage() {
       setResolvedWallet(stored.walletAddress);
       setRecipientInput(stored.walletAddress);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-only handoff bootstrap
   }, []);
 
   // Keep wallet status in sync when logged in via Mode A.
@@ -348,14 +376,87 @@ export default function HomePage() {
     return resolvedAddress.toUpperCase();
   }
 
+  function runModeAClaim(active: FaucetSession) {
+    if (isSessionExpired(active)) {
+      logout();
+      setMessage({
+        kind: "err",
+        text: "Session expired, log in again.",
+      });
+      return;
+    }
+
+    setMessage(null);
+    const address = active.walletAddress;
+
+    startTransition(async () => {
+      try {
+        const claimRes = await fetch("/api/v1/faucet/claim", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${active.token}`,
+          },
+          body: JSON.stringify({}),
+        });
+
+        const claimBody = (await claimRes.json()) as ClaimPayload;
+
+        if (claimRes.status === 401) {
+          logout();
+          setMessage({
+            kind: "err",
+            text: "Session expired, log in again.",
+          });
+          return;
+        }
+
+        if (claimBody.success) {
+          setMessage({
+            kind: "ok",
+            text: `Funded ${claimBody.amount} Circle USDC (SAC)`,
+            txHash: claimBody.txHash,
+            to: claimBody.to,
+            nextAt: claimBody.nextAvailableAt,
+          });
+        } else {
+          setMessage({
+            kind: "err",
+            text: modeAClaimErrorText(claimBody),
+            nextAt: claimBody.nextAvailableAt,
+          });
+        }
+
+        const refreshed = await fetch("/api/v1/faucet/status").then((r) =>
+          r.json(),
+        );
+        setStatus(refreshed as StatusPayload);
+
+        const walletRefreshed = await fetch(
+          `/api/v1/faucet/status?wallet=${encodeURIComponent(address)}`,
+        ).then((r) => r.json());
+        setWalletStatus(walletRefreshed as StatusPayload);
+      } catch (err) {
+        setMessage({
+          kind: "err",
+          text: err instanceof Error ? err.message : "Unexpected error",
+        });
+      }
+    });
+  }
+
   async function claim() {
     setMessage(null);
+
+    if (loggedIn && session && !isSessionExpired(session)) {
+      runModeAClaim(session);
+      return;
+    }
+
     const address = await resolveRecipient();
     if (!address) return;
 
-    const useModeA = loggedIn && !!session && !isSessionExpired(session);
-
-    if (!useModeA && !captchaToken && captchaConfigured) {
+    if (!captchaToken && captchaConfigured) {
       setMessage({
         kind: "err",
         text: "Please complete the captcha challenge.",
@@ -365,36 +466,16 @@ export default function HomePage() {
 
     startTransition(async () => {
       try {
-        const headers: Record<string, string> = {
-          "Content-Type": "application/json",
-        };
-        if (useModeA && session) {
-          headers.Authorization = `Bearer ${session.token}`;
-        }
-
         const claimRes = await fetch("/api/v1/faucet/claim", {
           method: "POST",
-          headers,
-          body: JSON.stringify(
-            useModeA
-              ? {}
-              : {
-                  to: address,
-                  captchaToken: captchaToken ?? undefined,
-                },
-          ),
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            to: address,
+            captchaToken: captchaToken ?? undefined,
+          }),
         });
 
         const claimBody = (await claimRes.json()) as ClaimPayload;
-
-        if (claimRes.status === 401 && useModeA) {
-          logout();
-          setMessage({
-            kind: "err",
-            text: "Session expired, log in again.",
-          });
-          return;
-        }
 
         if (claimBody.success) {
           setMessage({
@@ -415,7 +496,7 @@ export default function HomePage() {
           });
         }
 
-        if (!useModeA) resetTurnstile(setCaptchaToken);
+        resetTurnstile(setCaptchaToken);
 
         const refreshed = await fetch("/api/v1/faucet/status").then((r) =>
           r.json(),

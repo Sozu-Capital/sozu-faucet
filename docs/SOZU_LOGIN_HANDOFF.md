@@ -1,16 +1,16 @@
-# Sozu Login OAuth-style handoff (planned v1.1)
+# Sozu Login — Redirect Handoff (v1)
 
-**Status:** Faucet UI in progress (`feature/sozu-login`). Wallet `/auth/faucet-handoff` still required. This doc specifies what Wallet + Faucet must build for "Login with Sozu" on `faucet.sozu.capital`.
+**Status:** Implemented on Faucet `feature/sozu-login` + App `/auth/faucet-handoff`. Decisions: [`docs/adr/0001-login-with-sozu-handoff.md`](./adr/0001-login-with-sozu-handoff.md), terms in root `CONTEXT.md`.
 
 ---
 
 ## Product goal
 
-User taps **"Login with Sozu"** on the faucet site → redirects to Wallet → passkey login (if not already) → redirects back to faucet **with a short-lived JWT** → faucet claims directly to their bound wallet without pasting addresses.
+User taps **"Login with Sozu"** on the faucet site → **Redirect Handoff** to Sozu App → passkey login (if needed) → back to faucet with a short-lived **Mode A Token** → Faucet **auto-claims** once (clear errors if cooldown/empty/expired).
 
-No passkey UI hosted on the faucet domain. No long-lived faucet sessions. Testnet-only. 
+No passkey UI on the faucet domain. No long-lived faucet sessions. Testnet-only. Guest paste / `$sozutag` / CLI remain.
 
-The faucet remains embeddable in the Wallet Deposit flow (already works via Mode A JWT minting in-app).
+The faucet remains embeddable in the App Deposit flow (Mode A JWT minting in-app).
 
 ---
 
@@ -19,17 +19,16 @@ The faucet remains embeddable in the Wallet Deposit flow (already works via Mode
 ```
 User on faucet.sozu.capital
   → clicks "Login with Sozu"
-  → redirect to wallet.sozu.capital/auth/faucet-handoff?return=https://faucet.sozu.capital/
-  → (Wallet checks session; prompts passkey if needed)
-  → Wallet mints HS256 JWT { sub: userId, wallet: C…, exp: ~5m }
+  → redirect to app.sozu.capital/auth/faucet-handoff?return=https://faucet.sozu.capital/
+  → (App checks session; prompts passkey if needed)
+  → App mints HS256 JWT { sub: userId, wallet: C…, exp: ~5m }
   → redirect to https://faucet.sozu.capital/?token=<JWT>
   → Faucet:
       - reads token from query param
-      - stores in memory / sessionStorage
-      - removes from URL (replaceState)
-      - shows "Logged in as C…xxxxx" + Claim button (no paste field)
-  → Claim uses Authorization: Bearer <JWT> (Mode A)
-      - recipient forced to JWT wallet (no third-party payouts)
+      - stores in sessionStorage, strips from URL
+      - shows "Logged in as C…xxxxx"
+      - Auto-Claim on Return (Mode A Bearer) once
+  → On claim failure: clear error (cooldown / empty vault / expired session)
   → Token expires in ~5m; faucet shows "Session expired, log in again"
 ```
 
@@ -94,11 +93,10 @@ return Response.redirect(returnUrl.toString());
 On [`app/page.tsx`](../app/page.tsx):
 
 - Show **"Login with Sozu"** button when no token in state.
-- On click → redirect to `https://wallet.sozu.capital/auth/faucet-handoff?return=${encodeURIComponent(window.location.origin + "/")}`.
+- On click → redirect to `https://app.sozu.capital/auth/faucet-handoff?return=${encodeURIComponent(window.location.origin + "/")}`.
 - On mount: check `?token=` query param:
-  - If present → store in `sessionStorage` or React state, remove from URL.
-  - Show "Logged in as C…xxxxx" + Claim button (hide paste field).
-- Claim uses Mode A (`Authorization: Bearer <token>`).
+  - If present → store in `sessionStorage`, remove from URL, show logged-in UI, **auto-claim once**.
+- Manual Claim still available while session is valid.
 - Token expiry: catch 401 from claim → clear session → show "Session expired, log in again".
 
 No passkey logic on faucet domain — Wallet owns all auth.

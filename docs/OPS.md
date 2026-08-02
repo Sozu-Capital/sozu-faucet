@@ -57,7 +57,9 @@ DATABASE_URL=libsql://...turso.io
 TURSO_AUTH_TOKEN=...
 
 # CORS
-ALLOWED_ORIGINS=https://faucet.sozu.capital,https://wallet.sozu.capital
+ALLOWED_ORIGINS=https://faucet.sozu.capital,https://app.sozu.capital
+# Also set on Vercel: NEXT_PUBLIC_WALLET_URL=https://app.sozu.capital
+# Login with Sozu (v1) is Redirect Handoff — see docs/adr/0001-login-with-sozu-handoff.md
 
 # Public URL (for UI API strip)
 NEXT_PUBLIC_FAUCET_PUBLIC_URL=https://faucet.sozu.capital
