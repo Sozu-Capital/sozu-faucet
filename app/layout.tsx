@@ -4,7 +4,7 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "Sozu Faucet",
   description:
-    "One-click testnet Circle USDC (SAC) for Sozu wallets — Friendbot-like, Sozu-owned.",
+    "One-click testnet Circle USDC (SAC) on the Stellar Blockchain. Powered by Sozu.",
   icons: {
     apple: [
       { url: "/icons/sozu_icon_152.png", sizes: "152x152", type: "image/png" },

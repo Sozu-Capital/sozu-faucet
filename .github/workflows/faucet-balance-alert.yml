@@ -79,7 +79,7 @@ jobs:
               -H "Title: Sozu Faucet PANIC — almost empty" \
               -H "Priority: urgent" \
               -H "Tags: rotating_light,moneybag" \
-              -d "Treasury at ${BAL} USDC (panic < ${PANIC_USDC}). Refill now: Friendbot XLM → npm run ops:swap-usdc" \
+              -d "Treasury at ${BAL} USDC (panic < ${PANIC_USDC}). Refill via Circle testnet faucet / ops top-up." \
               "https://ntfy.sh/${NTFY_TOPIC}"
             echo "Notified: panic"
             exit 0

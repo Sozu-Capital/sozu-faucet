@@ -317,4 +317,4 @@ ORDER BY day DESC;
 - Keep `ALLOWED_ORIGINS` tight (only trusted domains).
 - Never disable captcha in production (`FAUCET_REQUIRE_CAPTCHA=true` or `NODE_ENV=production`).
 - Low-balance phone alerts: GitHub Action [`.github/workflows/faucet-balance-alert.yml`](../.github/workflows/faucet-balance-alert.yml) → [ntfy.sh](https://ntfy.sh). Default alert **&lt; 5000 USDC**, panic **&lt; 500 USDC**. Requires repo secret `NTFY_TOPIC`.
-- Circle testnet faucet has its own rate limits — request early/often as needed. Prefer refill via Friendbot XLM → `npm run ops:swap-usdc`.
+- Circle testnet faucet has its own rate limits — request early/often as needed.
