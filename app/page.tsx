@@ -1,6 +1,15 @@
 "use client";
 
 import { useEffect, useRef, useState, useTransition } from "react";
+import {
+  clearSession,
+  isSessionExpired,
+  readStoredSession,
+  shortAddress,
+  storeSession,
+  walletHandoffUrl,
+  type FaucetSession,
+} from "@/lib/faucet-session";
 
 type StatusPayload = {
   faucet: {
@@ -98,6 +107,7 @@ export default function HomePage() {
   const [resolvedWallet, setResolvedWallet] = useState<string | null>(null);
   const [walletStatus, setWalletStatus] = useState<StatusPayload | null>(null);
   const [status, setStatus] = useState<StatusPayload | null>(null);
+  const [session, setSession] = useState<FaucetSession | null>(null);
   const [message, setMessage] = useState<{
     kind: "ok" | "err";
     text: string;
@@ -117,12 +127,60 @@ export default function HomePage() {
   );
 
   const captchaConfigured = !!process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY;
+  const loggedIn = !!session && !isSessionExpired(session);
   const claimAmount = status?.faucet.claimAmount ?? 20;
   const claiming = pending && !resolving;
 
   useEffect(() => {
     setBaseUrl(window.location.origin);
   }, []);
+
+  // Login with Sozu: consume ?token= from Wallet handoff, or restore sessionStorage.
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    const tokenFromUrl = url.searchParams.get("token");
+    if (tokenFromUrl) {
+      const next = storeSession(tokenFromUrl);
+      url.searchParams.delete("token");
+      window.history.replaceState({}, "", url.pathname + url.search + url.hash);
+      if (next) {
+        setSession(next);
+        setResolvedWallet(next.walletAddress);
+        setRecipientInput(next.walletAddress);
+        return;
+      }
+      setMessage({
+        kind: "err",
+        text: "Login token was invalid or expired. Try Login with Sozu again.",
+      });
+    }
+
+    const stored = readStoredSession();
+    if (stored) {
+      setSession(stored);
+      setResolvedWallet(stored.walletAddress);
+      setRecipientInput(stored.walletAddress);
+    }
+  }, []);
+
+  // Keep wallet status in sync when logged in via Mode A.
+  useEffect(() => {
+    if (!loggedIn || !session) return;
+    let cancelled = false;
+    void fetch(
+      `/api/v1/faucet/status?wallet=${encodeURIComponent(session.walletAddress)}`,
+    )
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data: StatusPayload | null) => {
+        if (!cancelled && data) setWalletStatus(data);
+      })
+      .catch(() => {
+        if (!cancelled) setWalletStatus(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [loggedIn, session]);
 
   useEffect(() => {
     const closed = closedVideoRef.current;
@@ -147,7 +205,10 @@ export default function HomePage() {
   }, []);
 
   // Resolve address / sozutag + fetch per-wallet cooldown for Copy gating
+  // (guest / paste path only — logged-in Mode A binds wallet from JWT)
   useEffect(() => {
+    if (loggedIn) return;
+
     const trimmed = recipientInput.trim();
     if (!trimmed) {
       setResolvedWallet(null);
@@ -195,11 +256,11 @@ export default function HomePage() {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [recipientInput]);
+  }, [recipientInput, loggedIn]);
 
   useEffect(() => {
     const siteKey = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY;
-    if (!siteKey) return;
+    if (!siteKey || loggedIn) return;
 
     const script = document.createElement("script");
     script.src =
@@ -217,9 +278,38 @@ export default function HomePage() {
       }
     };
     document.body.appendChild(script);
-  }, []);
+    return () => {
+      script.remove();
+    };
+  }, [loggedIn]);
+
+  function loginWithSozu() {
+    const returnUrl = `${window.location.origin}/`;
+    window.location.href = walletHandoffUrl(returnUrl);
+  }
+
+  function logout() {
+    clearSession();
+    setSession(null);
+    setRecipientInput("");
+    setResolvedWallet(null);
+    setWalletStatus(null);
+    setMessage(null);
+  }
 
   async function resolveRecipient(): Promise<string | null> {
+    if (loggedIn && session) {
+      if (isSessionExpired(session)) {
+        logout();
+        setMessage({
+          kind: "err",
+          text: "Session expired, log in again.",
+        });
+        return null;
+      }
+      return session.walletAddress;
+    }
+
     const trimmed = recipientInput.trim();
     if (!trimmed) {
       setMessage({ kind: "err", text: "Enter a Stellar address or $sozutag." });
@@ -263,7 +353,9 @@ export default function HomePage() {
     const address = await resolveRecipient();
     if (!address) return;
 
-    if (!captchaToken && captchaConfigured) {
+    const useModeA = loggedIn && !!session && !isSessionExpired(session);
+
+    if (!useModeA && !captchaToken && captchaConfigured) {
       setMessage({
         kind: "err",
         text: "Please complete the captcha challenge.",
@@ -273,16 +365,36 @@ export default function HomePage() {
 
     startTransition(async () => {
       try {
+        const headers: Record<string, string> = {
+          "Content-Type": "application/json",
+        };
+        if (useModeA && session) {
+          headers.Authorization = `Bearer ${session.token}`;
+        }
+
         const claimRes = await fetch("/api/v1/faucet/claim", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            to: address,
-            captchaToken: captchaToken ?? undefined,
-          }),
+          headers,
+          body: JSON.stringify(
+            useModeA
+              ? {}
+              : {
+                  to: address,
+                  captchaToken: captchaToken ?? undefined,
+                },
+          ),
         });
 
         const claimBody = (await claimRes.json()) as ClaimPayload;
+
+        if (claimRes.status === 401 && useModeA) {
+          logout();
+          setMessage({
+            kind: "err",
+            text: "Session expired, log in again.",
+          });
+          return;
+        }
 
         if (claimBody.success) {
           setMessage({
@@ -303,7 +415,7 @@ export default function HomePage() {
           });
         }
 
-        resetTurnstile(setCaptchaToken);
+        if (!useModeA) resetTurnstile(setCaptchaToken);
 
         const refreshed = await fetch("/api/v1/faucet/status").then((r) =>
           r.json(),
@@ -442,37 +554,54 @@ Docs: ${baseUrl || "https://faucet.sozu.capital"}/agents.md`;
       </p>
 
       <div className="panel">
-        <label>
-          Recipient (C…, G…, or $sozutag)
-          <div style={{ display: "flex", gap: "0.5rem", alignItems: "stretch" }}>
-            <input
-              value={recipientInput}
-              onChange={(e) => {
-                setRecipientInput(e.target.value);
-              }}
-              placeholder="C…, G…, or $sozutag"
-              autoComplete="off"
-              spellCheck={false}
-              disabled={pending || resolving}
-              style={{ flex: 1 }}
-            />
+        {loggedIn && session ? (
+          <div className="session-bar">
+            <p className="session-bar__label">
+              Logged in as{" "}
+              <code>{shortAddress(session.walletAddress)}</code>
+              {walletOnCooldown && walletStatus?.availability.nextAvailableAt
+                ? ` · cooldown ${formatCountdown(walletStatus.availability.nextAvailableAt)}`
+                : ""}
+            </p>
             <button
               type="button"
               className="login-btn"
-              disabled={pending || resolving}
-              onClick={() => {
-                setMessage({
-                  kind: "err",
-                  text: "Login with Sozu coming soon. Use paste address for now.",
-                });
-              }}
+              disabled={pending}
+              onClick={logout}
             >
-              Login with Sozu
+              Log out
             </button>
           </div>
-        </label>
+        ) : (
+          <label>
+            Recipient (C…, G…, or $sozutag)
+            <div
+              style={{ display: "flex", gap: "0.5rem", alignItems: "stretch" }}
+            >
+              <input
+                value={recipientInput}
+                onChange={(e) => {
+                  setRecipientInput(e.target.value);
+                }}
+                placeholder="C…, G…, or $sozutag"
+                autoComplete="off"
+                spellCheck={false}
+                disabled={pending || resolving}
+                style={{ flex: 1 }}
+              />
+              <button
+                type="button"
+                className="login-btn"
+                disabled={pending || resolving}
+                onClick={loginWithSozu}
+              >
+                Login with Sozu
+              </button>
+            </div>
+          </label>
+        )}
 
-        {resolvedWallet && (
+        {!loggedIn && resolvedWallet && (
           <p
             style={{
               margin: "0.4rem 0 0",
@@ -480,14 +609,14 @@ Docs: ${baseUrl || "https://faucet.sozu.capital"}/agents.md`;
               color: "var(--muted)",
             }}
           >
-            Resolved: {resolvedWallet.slice(0, 4)}…{resolvedWallet.slice(-4)}
+            Resolved: {shortAddress(resolvedWallet)}
             {walletOnCooldown && walletStatus?.availability.nextAvailableAt
               ? ` · cooldown ${formatCountdown(walletStatus.availability.nextAvailableAt)}`
               : ""}
           </p>
         )}
 
-        {captchaConfigured && (
+        {!loggedIn && captchaConfigured && (
           <div
             id="turnstile-widget"
             style={{ minHeight: "65px", marginTop: "0.5rem" }}

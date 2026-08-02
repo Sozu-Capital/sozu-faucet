@@ -1,6 +1,6 @@
 # Sozu Login OAuth-style handoff (planned v1.1)
 
-**Status:** Not implemented. This doc specifies what Wallet + Faucet must build for "Login with Sozu" on `faucet.sozu.capital`.
+**Status:** Faucet UI in progress (`feature/sozu-login`). Wallet `/auth/faucet-handoff` still required. This doc specifies what Wallet + Faucet must build for "Login with Sozu" on `faucet.sozu.capital`.
 
 ---
 
