@@ -30,9 +30,10 @@ export async function GET(request: Request) {
 
 \`\`\`bash
 npx @sozu/faucet@latest claim <C_OR_G_ADDRESS>${urlFlag}
+npx @sozu/faucet@latest claim${urlFlag}
 \`\`\`
 
-One command. CLI solves PoW and claims. No browser. No Turnstile. Do not ask humans for FAUCET_AUTH_SECRET.
+One command. Omit address to generate G… + trustline + claim. CLI solves PoW. No browser. No Turnstile. Never ask humans for secret keys or FAUCET_AUTH_SECRET.
 
 ## Docs
 
@@ -57,7 +58,8 @@ Body: {"to":"<C…/G…>","captchaToken":"<turnstile>"}
 
 ## Classic G… accounts
 
-G… needs Circle USDC trustline \`USDC:GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5\`. CLI preflights and returns \`trustline_required\` + \`helpUrl\` (Stellar Lab Fund Account). Never collect secrets — user adds trustline in Lab, then retries. C… skips trustline.
+G… needs Circle USDC trustline \`USDC:GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5\`.
+Bare \`claim\` creates wallet+trustline. Existing G… without trustline → \`trustline_required\` + Stellar Lab \`helpUrl\`. Never collect secrets in chat. C… skips trustline.
 `;
 
   return new Response(body, {

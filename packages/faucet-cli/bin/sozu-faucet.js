@@ -1,10 +1,13 @@
 #!/usr/bin/env node
 import { solvePow } from "../lib/pow.js";
+import {
+  CIRCLE_USDC_ISSUER,
+  HORIZON_TESTNET,
+  createPreparedGWallet,
+  hasUsdcTrustline,
+} from "../lib/wallet.js";
 
 const DEFAULT_URL = "https://faucet.sozu.capital";
-const HORIZON_TESTNET = "https://horizon-testnet.stellar.org";
-const CIRCLE_USDC_ISSUER =
-  "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5";
 
 /** Stellar Lab Testnet → Fund Account (Add trustline for USDC). */
 const STELLAR_LAB_TESTNET_FUND_URL =
@@ -14,16 +17,20 @@ function usage(exitCode = 1) {
   console.error(`Sozu Faucet CLI — claim testnet Circle USDC (SAC)
 
 Usage:
-  npx @sozu/faucet claim <C_OR_G_ADDRESS> [--url <faucet-origin>]
+  npx @sozu/faucet claim [<C_OR_G_ADDRESS>] [--url <faucet-origin>]
+
+  claim <ADDRESS>   Fund an existing C… or G… wallet
+  claim             Generate a fresh G… wallet, add USDC trustline, claim
 
 Env:
   SOZU_FAUCET_URL   Override default origin (default: ${DEFAULT_URL})
 
-Classic G… wallets need a Circle USDC trustline before claiming.
-The CLI cannot sign it (needs your secret) — it will detect a missing
-trustline and link Stellar Lab so you can add it manually, then retry.
+Existing G… wallets need a Circle USDC trustline. This CLI never asks for
+your secret — it links Stellar Lab so you can add the trustline and retry.
+C… smart accounts claim directly (no trustline).
 
-Example:
+Examples:
+  npx @sozu/faucet claim
   npx @sozu/faucet claim CABC...YOUR...ADDRESS
 `);
   process.exit(exitCode);
@@ -31,8 +38,11 @@ Example:
 
 function parseArgs(argv) {
   const args = argv.slice(2);
-  if (args.length === 0 || args[0] === "-h" || args[0] === "--help") {
-    usage(args.length === 0 ? 1 : 0);
+  if (args[0] === "-h" || args[0] === "--help") {
+    usage(0);
+  }
+  if (args.length === 0) {
+    usage(1);
   }
 
   const command = args[0];
@@ -65,12 +75,10 @@ function parseArgs(argv) {
     to = a;
   }
 
-  if (!to) {
-    console.error("Missing recipient address.");
-    usage(1);
-  }
-
-  return { to: to.trim().toUpperCase(), url: url.replace(/\/$/, "") };
+  return {
+    to: to ? to.trim().toUpperCase() : null,
+    url: url.replace(/\/$/, ""),
+  };
 }
 
 function isStellarAddress(value) {
@@ -103,10 +111,10 @@ async function readJson(res, label) {
 }
 
 /**
- * For classic G… addresses: require Horizon account + Circle USDC trustline
- * before spending PoW. Never asks for a secret — points to Stellar Lab.
+ * For classic G… addresses the user provided: require Horizon account + trustline.
+ * Never asks for a secret — points to Stellar Lab.
  */
-async function preflightGAccount(to) {
+async function preflightExistingG(to) {
   if (!to.startsWith("G")) return null;
 
   process.stderr.write("Checking Circle USDC trustline…\n");
@@ -131,20 +139,13 @@ async function preflightGAccount(to) {
   }
 
   const body = await res.json();
-  const hasTrustline = (body.balances ?? []).some(
-    (b) =>
-      b.asset_type === "credit_alphanum4" &&
-      b.asset_code === "USDC" &&
-      b.asset_issuer === CIRCLE_USDC_ISSUER,
-  );
-
-  if (hasTrustline) return null;
+  if (hasUsdcTrustline(body)) return null;
 
   return {
     success: false,
     amount: 0,
     error:
-      `Trustline missing: classic G… account cannot receive Circle USDC (USDC:${CIRCLE_USDC_ISSUER}). This CLI cannot sign the trustline (needs your secret). Open Stellar Lab, add the USDC trustline, then re-run claim.`,
+      `Trustline missing: classic G… account cannot receive Circle USDC (USDC:${CIRCLE_USDC_ISSUER}). Open Stellar Lab, add the USDC trustline (sign with your wallet), then re-run claim.`,
     reason: "trustline_required",
     helpUrl: STELLAR_LAB_TESTNET_FUND_URL,
   };
@@ -155,20 +156,19 @@ function printFailure(claim) {
   writeClaimHint(claim);
 }
 
-/** Stderr guidance for common claim failures (does not change JSON stdout). */
 function writeClaimHint(claim) {
   const reason = claim?.reason;
   const helpUrl = claim?.helpUrl || STELLAR_LAB_TESTNET_FUND_URL;
 
   if (reason === "trustline_required") {
     process.stderr.write(
-      `\nTrustline missing — the faucet cannot add it without your secret key.\n` +
-        `Add Circle USDC on Testnet in Stellar Lab, then retry this command:\n` +
+      `\nTrustline missing — add it in Stellar Lab (this CLI never asks for your secret):\n` +
         `  1. Open ${helpUrl}\n` +
         `  2. Paste your G… address\n` +
         `  3. Click "Add trustline" next to USDC and sign\n` +
         `  4. Re-run: npx @sozu/faucet claim <ADDRESS>\n` +
-        `\nC… smart accounts do not need a trustline.\n`,
+        `\nOr create a funded wallet in one step: npx @sozu/faucet claim\n` +
+        `C… smart accounts do not need a trustline.\n`,
     );
     return;
   }
@@ -178,16 +178,15 @@ function writeClaimHint(claim) {
       `\nAccount not on testnet yet.\n` +
         `  1. Open ${helpUrl}\n` +
         `  2. Paste your G… address → Fund (Friendbot) → Add trustline for USDC → sign\n` +
-        `  3. Re-run: npx @sozu/faucet claim <ADDRESS>\n`,
+        `  3. Re-run: npx @sozu/faucet claim <ADDRESS>\n` +
+        `\nOr: npx @sozu/faucet claim   (generates a new G… + trustline + claim)\n`,
     );
     return;
   }
 
-  // Older API builds collapsed trustline failures into payment_failed.
   if (reason === "payment_failed" && claim?.to?.startsWith?.("G")) {
     process.stderr.write(
-      `\nIf this is a classic G… wallet, it likely needs a Circle USDC trustline.\n` +
-        `Add it in Stellar Lab (needs your secret / Freighter), then retry:\n` +
+      `\nIf this is a classic G… wallet, add a Circle USDC trustline in Stellar Lab:\n` +
         `  ${helpUrl}\n`,
     );
     return;
@@ -208,22 +207,7 @@ function writeClaimHint(claim) {
   }
 }
 
-async function main() {
-  const { to, url } = parseArgs(process.argv);
-
-  if (!isStellarAddress(to)) {
-    console.error(
-      `Invalid Stellar address: ${to}\nExpected 56-char C… or G… address.`,
-    );
-    process.exit(1);
-  }
-
-  const blocked = await preflightGAccount(to);
-  if (blocked) {
-    printFailure(blocked);
-    process.exit(1);
-  }
-
+async function claimTo(url, to) {
   process.stderr.write(`Requesting PoW challenge from ${url}…\n`);
   const challengeRes = await fetch(`${url}/api/v1/faucet/pow/challenge`, {
     method: "POST",
@@ -232,13 +216,15 @@ async function main() {
   });
   const challenge = await readJson(challengeRes, "PoW challenge");
   if (!challengeRes.ok) {
-    printFailure({
-      success: false,
-      error: challenge.error ?? `Challenge failed (${challengeRes.status})`,
-      reason: challenge.reason,
-      helpUrl: challenge.helpUrl,
-    });
-    process.exit(1);
+    return {
+      ok: false,
+      claim: {
+        success: false,
+        error: challenge.error ?? `Challenge failed (${challengeRes.status})`,
+        reason: challenge.reason,
+        helpUrl: challenge.helpUrl,
+      },
+    };
   }
 
   const started = Date.now();
@@ -270,9 +256,42 @@ async function main() {
     }),
   });
   const claim = await readJson(claimRes, "Claim");
+  return { ok: claimRes.ok && claim.success === true, claim };
+}
 
-  if (!claimRes.ok || claim.success !== true) {
-    // Ensure Lab link is present even on older API builds.
+async function main() {
+  const { to: providedTo, url } = parseArgs(process.argv);
+
+  let to = providedTo;
+  let generatedWallet = null;
+
+  if (!to) {
+    process.stderr.write(
+      "No address given — creating a fresh G… wallet (Friendbot + USDC trustline)…\n",
+    );
+    generatedWallet = await createPreparedGWallet({
+      onProgress: (msg) => process.stderr.write(msg),
+    });
+    to = generatedWallet.address;
+    process.stderr.write(
+      `Wallet ready (${generatedWallet.trustline} trustline). Claiming…\n`,
+    );
+  } else if (!isStellarAddress(to)) {
+    console.error(
+      `Invalid Stellar address: ${to}\nExpected 56-char C… or G… address, or omit for a new wallet.`,
+    );
+    process.exit(1);
+  } else {
+    const blocked = await preflightExistingG(to);
+    if (blocked) {
+      printFailure(blocked);
+      process.exit(1);
+    }
+  }
+
+  const { ok, claim } = await claimTo(url, to);
+
+  if (!ok) {
     if (
       (claim.reason === "trustline_required" ||
         claim.reason === "account_missing" ||
@@ -281,11 +300,41 @@ async function main() {
     ) {
       claim.helpUrl = STELLAR_LAB_TESTNET_FUND_URL;
     }
+    if (generatedWallet) {
+      claim.wallet = {
+        address: generatedWallet.address,
+        secret: generatedWallet.secret,
+        generated: true,
+        funded: generatedWallet.funded,
+        trustline: generatedWallet.trustline,
+      };
+      process.stderr.write(
+        "\nWallet was created before claim failed — save the secret from the JSON.\n",
+      );
+    }
     printFailure({ ...claim, to });
     process.exit(1);
   }
 
-  console.log(JSON.stringify(claim, null, 2));
+  const out = { ...claim };
+  if (generatedWallet) {
+    out.wallet = {
+      address: generatedWallet.address,
+      secret: generatedWallet.secret,
+      generated: true,
+      funded: generatedWallet.funded,
+      trustline: generatedWallet.trustline,
+    };
+  }
+
+  console.log(JSON.stringify(out, null, 2));
+
+  if (generatedWallet) {
+    process.stderr.write(
+      `\nSave this secret now — it is only shown once:\n  ${generatedWallet.secret}\n` +
+        `Address: ${generatedWallet.address}\n`,
+    );
+  }
 
   if (claim.to) {
     const explorer = claim.to.startsWith("G")
