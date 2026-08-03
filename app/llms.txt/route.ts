@@ -6,8 +6,8 @@ export const dynamic = "force-dynamic";
  * GET /llms.txt — short machine-oriented pointer for agents.
  */
 export async function GET(request: Request) {
-  let claimAmount = 20;
-  let cooldownMinutes = 120;
+  let claimAmount = 100;
+  let cooldownMinutes = 60;
 
   try {
     const cfg = getFaucetConfig();

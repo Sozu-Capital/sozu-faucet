@@ -35,12 +35,12 @@ FAUCET_TREASURY_SECRET=S...  # testnet secret key
 FAUCET_CONTRACT_ID=          # optional vault contract
 FAUCET_TOKEN_CONTRACT_ID=    # optional override (defaults to Circle SAC)
 
-# Faucet config
+# Faucet config (100 USDC / claim, 500 claims/day, 1h cooldown)
 FAUCET_SLUG=sozu-testnet
 FAUCET_NAME=Sozu Faucet
-FAUCET_CLAIM_AMOUNT=20
-FAUCET_DAILY_LIMIT=5000
-FAUCET_COOLDOWN_MINUTES=120
+FAUCET_CLAIM_AMOUNT=100
+FAUCET_DAILY_LIMIT=50000
+FAUCET_COOLDOWN_MINUTES=60
 FAUCET_GLOBAL_COOLDOWN_MINUTES=0
 
 # Auth
@@ -172,11 +172,11 @@ Should show:
 1. Open `https://faucet.sozu.capital`
 2. Paste a known testnet C… or G… address (create one in Wallet if needed)
 3. Complete captcha
-4. Click "Get 20 testnet USDC"
+4. Click "Get 100 testnet USDC"
 5. Wait for success message + tx hash
 6. Verify on [Stellar Expert](https://stellar.expert/explorer/testnet):
    - Search for the recipient address
-   - Check Soroban balances → should show 20.0000000 Circle USDC (SAC)
+   - Check Soroban balances → should show 100.0000000 Circle USDC (SAC)
 
 ### 10. Test cooldown
 

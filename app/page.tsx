@@ -167,7 +167,7 @@ export default function HomePage() {
 
   const captchaConfigured = !!process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY;
   const loggedIn = !!session && !isSessionExpired(session);
-  const claimAmount = status?.faucet.claimAmount ?? 20;
+  const claimAmount = status?.faucet.claimAmount ?? 100;
   const claiming = pending && !resolving;
 
   useEffect(() => {

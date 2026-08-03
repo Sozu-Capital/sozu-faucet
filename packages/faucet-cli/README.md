@@ -1,6 +1,6 @@
 # `@sozu/faucet`
 
-Claim **testnet Circle USDC (SAC)** from [Sozu Faucet](https://faucet.sozu.capital) with one command. The CLI mints a short-lived PoW challenge, solves it locally, and claims — no browser, no captcha.
+Claim **testnet Circle USDC (SAC)** from [Sozu Faucet](https://faucet.sozu.capital) with one command (**100 USDC** per claim; amount is server-fixed). The CLI mints a short-lived PoW challenge, solves it locally, and claims — no browser, no captcha.
 
 ```bash
 # Existing wallet
@@ -34,7 +34,7 @@ Classic G… wallets need a Circle USDC trustline. The CLI checks Horizon and, i
 ## Agent prompt
 
 ```
-Claim testnet USDC from Sozu Faucet:
+Claim 100 testnet USDC from Sozu Faucet:
 
 npx @sozu/faucet@latest claim
 

@@ -2,6 +2,8 @@
 
 Friendbot-like testnet **Circle USDC (SAC)** — one click in the browser, or **one terminal command**.
 
+**Each claim pays 100 USDC.** Cooldown: 60 minutes per wallet. Daily budget: 50,000 USDC (500 claims).
+
 ```bash
 npx @sozu/faucet claim CABC...YOUR...ADDRESS
 # or omit the address to generate a G… wallet + trustline + claim:
@@ -75,16 +77,16 @@ Public. Optional `Authorization: Bearer <JWT>` adds user cooldown.
   "faucet": {
     "slug": "sozu-testnet",
     "name": "Sozu Faucet",
-    "claimAmount": 20,
-    "dailyLimit": 5000,
+    "claimAmount": 100,
+    "dailyLimit": 50000,
     "status": "active",
     "asset": "circle_usdc_sac",
     "network": "testnet",
-    "cooldownMinutes": 120
+    "cooldownMinutes": 60
   },
   "availability": {
     "available": true,
-    "remainingToday": 4980,
+    "remainingToday": 49900,
     "reason": null,
     "nextAvailableAt": null
   }
@@ -122,7 +124,7 @@ Success:
 ```json
 {
   "success": true,
-  "amount": 20,
+  "amount": 100,
   "asset": "circle_usdc_sac",
   "network": "testnet",
   "to": "C...",
@@ -136,7 +138,7 @@ Failure:
 ```json
 {
   "success": false,
-  "amount": 20,
+  "amount": 100,
   "error": "human message",
   "reason": "user_cooldown",
   "nextAvailableAt": "..."
@@ -151,8 +153,9 @@ Ops: vault/treasury balance, `canCoverClaim`, daily remaining.
 
 | Control | Default | Env |
 |---|---|---|
-| Per-user / per-wallet cooldown | **120 minutes** (Circle-like) | `FAUCET_COOLDOWN_MINUTES` |
-| Daily budget | 5000 USDC | `FAUCET_DAILY_LIMIT` |
+| Per claim | **100 USDC** | `FAUCET_CLAIM_AMOUNT` |
+| Per-user / per-wallet cooldown | **60 minutes** | `FAUCET_COOLDOWN_MINUTES` |
+| Daily budget | **50000 USDC** (500 × 100) | `FAUCET_DAILY_LIMIT` |
 | Global gap between claims | off | `FAUCET_GLOBAL_COOLDOWN_MINUTES` |
 | PoW difficulty (Mode C) | 20 leading zero bits | `FAUCET_POW_DIFFICULTY` |
 | PoW challenge TTL | 300s | `FAUCET_POW_TTL_SECONDS` |

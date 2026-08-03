@@ -59,10 +59,10 @@ export function getFaucetConfig() {
   return {
     slug: env("FAUCET_SLUG", "sozu-testnet").toLowerCase(),
     name: env("FAUCET_NAME", "Sozu Faucet"),
-    claimAmount: envNumber("FAUCET_CLAIM_AMOUNT", 20),
-    dailyLimit: envNumber("FAUCET_DAILY_LIMIT", 5000),
-    /** Per-user / per-wallet cooldown. Default 120m (Circle-like). */
-    cooldownMinutes: envNumber("FAUCET_COOLDOWN_MINUTES", 120),
+    claimAmount: envNumber("FAUCET_CLAIM_AMOUNT", 100),
+    dailyLimit: envNumber("FAUCET_DAILY_LIMIT", 50000),
+    /** Per-user / per-wallet cooldown. Default 60m. */
+    cooldownMinutes: envNumber("FAUCET_COOLDOWN_MINUTES", 60),
     globalCooldownMinutes: envNumber("FAUCET_GLOBAL_COOLDOWN_MINUTES", 0),
     /**
      * Mode C PoW: leading zero bits on SHA-256(prefix:id:to:nonce).

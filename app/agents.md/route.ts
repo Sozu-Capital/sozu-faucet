@@ -6,9 +6,9 @@ export const dynamic = "force-dynamic";
  * GET /agents.md — agent-readable faucet docs.
  */
 export async function GET(request: Request) {
-  let claimAmount = 20;
-  let cooldownMinutes = 120;
-  let dailyLimit = 5000;
+  let claimAmount = 100;
+  let cooldownMinutes = 60;
+  let dailyLimit = 50000;
   let slug = "sozu-testnet";
 
   try {
@@ -29,6 +29,8 @@ export async function GET(request: Request) {
   const body = `# Sozu Faucet — Agent guide
 
 Testnet Circle USDC (SAC). Base: \`${origin}\`
+
+**Each claim: ${claimAmount} USDC.** Cooldown: ${cooldownMinutes}m. Daily budget: ${dailyLimit} USDC.
 
 ## Happy path (preferred)
 
