@@ -547,9 +547,12 @@ export default function HomePage() {
       walletStatus.availability.reason === "insufficient_vault");
 
   const copyBlockedReason = (() => {
-    if (!recipientInput.trim()) return "Enter a C…/G… or $sozutag above.";
     if (resolving) return "Resolving sozutag…";
-    if (!resolvedWallet) return "Need a valid C…/G… address before copying.";
+    // Empty recipient → prompt uses bare `claim` (generate wallet).
+    // Partial/invalid input without a resolved wallet → block.
+    if (recipientInput.trim() && !resolvedWallet) {
+      return "Need a valid C…/G… / $sozutag, or clear the field to generate a wallet.";
+    }
     if (walletOnCooldown) {
       const when = walletStatus?.availability.nextAvailableAt
         ? formatCountdown(walletStatus.availability.nextAvailableAt)
@@ -562,9 +565,9 @@ export default function HomePage() {
     return null;
   })();
 
-  const canCopyPrompt = !!resolvedWallet && !walletOnCooldown && !resolving;
+  const canCopyPrompt = !copyBlockedReason;
 
-  function buildAgentPromptText(wallet: string): string {
+  function buildAgentPromptText(wallet: string | null): string {
     const origin =
       baseUrl ||
       process.env.NEXT_PUBLIC_FAUCET_PUBLIC_URL ||
@@ -572,18 +575,37 @@ export default function HomePage() {
     const isLocal =
       origin.includes("localhost") || origin.includes("127.0.0.1");
     const urlFlag = isLocal ? ` --url ${origin.replace(/\/$/, "")}` : "";
+
+    if (!wallet) {
+      return `Claim ${claimAmount} testnet USDC (Circle SAC) from Sozu Faucet.
+
+No address was given — run this single command (generates a G… wallet, adds a Circle USDC trustline, solves PoW, claims):
+
+npx @sozu/faucet@latest claim${urlFlag}
+
+Print the JSON. If wallet.secret is present, tell the user to save it once (shown only in that output). Do not ask the user for secret keys.
+On success, open Stellar Expert for wallet.address / to.`;
+    }
+
+    const explorer = wallet.startsWith("G")
+      ? `https://stellar.expert/explorer/testnet/account/${wallet}`
+      : `https://stellar.expert/explorer/testnet/contract/${wallet}`;
+
     return `Claim ${claimAmount} testnet USDC (Circle SAC) from Sozu Faucet for ${wallet}.
 
 Run this single command (solves a short PoW, then claims — no browser):
 
 npx @sozu/faucet@latest claim ${wallet}${urlFlag}
 
-Print the JSON. On success, open:
-https://stellar.expert/explorer/testnet/contract/${wallet}`;
+Print the JSON. Never ask the user for a secret key.
+- C… addresses claim directly.
+- G… without a USDC trustline: surface trustline_required + helpUrl (Stellar Lab); user adds the trustline there, then re-run.
+On success, open:
+${explorer}`;
   }
 
   async function copyAgentPrompt() {
-    if (!canCopyPrompt || !resolvedWallet) return;
+    if (!canCopyPrompt) return;
     const prompt = buildAgentPromptText(resolvedWallet);
     try {
       await navigator.clipboard.writeText(prompt);
@@ -601,17 +623,7 @@ https://stellar.expert/explorer/testnet/contract/${wallet}`;
     }
   }
 
-  const agentPromptPreview = resolvedWallet
-    ? buildAgentPromptText(resolvedWallet)
-    : `Enter a recipient above, then Copy prompt.
-
-Clipboard will contain one command:
-
-npx @sozu/faucet@latest claim <ADDRESS>
-
-No captcha. No JWT. Agent runs one shell command.
-
-Docs: ${baseUrl || "https://faucet.sozu.capital"}/agents.md`;
+  const agentPromptPreview = buildAgentPromptText(resolvedWallet);
 
   return (
     <>
@@ -644,8 +656,9 @@ Docs: ${baseUrl || "https://faucet.sozu.capital"}/agents.md`;
       <main>
       <h1>Sozu Faucet</h1>
       <p className="lede">
-        Get test USDC (SAC) in one click — or one{" "}
-        <code style={{ fontSize: "0.92em" }}>npx @sozu/faucet</code> command
+        Get test USDC (SAC) in one click — or{" "}
+        <code style={{ fontSize: "0.92em" }}>npx @sozu/faucet claim</code>{" "}
+        (optional address; omit to mint a fresh G… wallet)
       </p>
 
       <div className="panel">
@@ -784,8 +797,17 @@ Docs: ${baseUrl || "https://faucet.sozu.capital"}/agents.md`;
       <div className="agent-section">
         <h2>For agents & automation</h2>
         <p>
-          One shell command. The CLI solves a short proof-of-work, then claims —
-          no browser, no captcha.
+          One shell command. Omit the address to generate a G… wallet + USDC
+          trustline + claim. Paste an existing C…/G… to fund that wallet. Never
+          collect secret keys in chat — existing G… wallets add the trustline in{" "}
+          <a
+            href="https://lab.stellar.org/account/fund"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Stellar Lab
+          </a>
+          .
         </p>
         <div className="agent-prompt">
           <pre>{agentPromptPreview}</pre>

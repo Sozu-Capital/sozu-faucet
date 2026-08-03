@@ -4,6 +4,8 @@ Friendbot-like testnet **Circle USDC (SAC)** — one click in the browser, or **
 
 ```bash
 npx @sozu/faucet claim CABC...YOUR...ADDRESS
+# or omit the address to generate a G… wallet + trustline + claim:
+npx @sozu/faucet claim
 ```
 
 ```
@@ -165,8 +167,10 @@ Failed claims do **not** consume cooldown or daily budget.
 
 ```bash
 npx @sozu/faucet claim <C_OR_G_ADDRESS>
+npx @sozu/faucet claim                                 # new G… + trustline + claim
 # local faucet:
 npx @sozu/faucet claim <C_OR_G_ADDRESS> --url http://localhost:3010
+npx @sozu/faucet claim --url http://localhost:3010
 ```
 
 Package lives in [`packages/faucet-cli`](./packages/faucet-cli). Publish to npm as `@sozu/faucet` for public `npx`.

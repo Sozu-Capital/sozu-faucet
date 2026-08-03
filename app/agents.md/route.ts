@@ -32,16 +32,20 @@ Testnet Circle USDC (SAC). Base: \`${origin}\`
 
 ## Happy path (preferred)
 
-One shell command. No browser. No captcha. No JWT.
+One shell command. No browser. No captcha. No JWT. Never ask humans for secret keys.
 
 \`\`\`bash
+# Existing C… / G… wallet
 npx @sozu/faucet@latest claim <C_OR_G_ADDRESS>${urlFlag}
+
+# No address → generate G… + Friendbot + USDC trustline + claim
+npx @sozu/faucet@latest claim${urlFlag}
 \`\`\`
 
-The CLI: mints a PoW challenge → solves it locally (~a few seconds) → claims.
-Paste into your agent as a single action. Print the JSON.
+The CLI: (optional wallet prep) → PoW → claim. Print the JSON.
+If \`wallet.secret\` is present, tell the user to save it once.
 
-On the site: enter address → **Copy prompt** → paste into agent (same command).
+On the site: **Copy prompt** (with or without a recipient) → paste into agent.
 
 Agent Skill (install once, then say "get testnet dollars"):
 \`https://github.com/blessedux/agent-skills/blob/main/sozu-faucet/SKILL.md\`
@@ -103,11 +107,12 @@ Failed claims do not consume cooldown.
 
 G… wallets **cannot** receive Circle USDC until they have a trustline for
 \`USDC:GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5\`.
-\`npx @sozu/faucet\` detects this before PoW and returns
-\`reason: "trustline_required"\` with \`helpUrl\` pointing at Stellar Lab
-(Testnet Fund Account → Add trustline for USDC). The CLI never asks for a
-secret — the user signs in Lab / Freighter, then re-runs claim.
-C… smart accounts do not need a trustline — claim directly.
+
+- **No address** (\`npx @sozu/faucet claim\`): CLI generates a G…, Friendbots it,
+  adds the trustline with the local secret, then claims. Secret appears once in JSON.
+- **Existing G… without trustline**: \`trustline_required\` + \`helpUrl\` (Stellar Lab).
+  User adds the trustline there — never collect secrets in chat.
+- **C…**: claim directly (no trustline).
 
 ## Verify
 
