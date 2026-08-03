@@ -36,6 +36,7 @@ One command. CLI solves PoW and claims. No browser. No Turnstile. Do not ask hum
 
 ## Docs
 
+- Skill: https://github.com/blessedux/agent-skills/blob/main/sozu-faucet/SKILL.md
 - Agents: ${origin}/agents.md
 - Status: ${origin}/api/v1/faucet/status
 - PoW challenge: POST ${origin}/api/v1/faucet/pow/challenge
@@ -53,6 +54,10 @@ Body (optional): {"to":"<wallet matching JWT>"}
 ## Mode B claim (humans / browser)
 
 Body: {"to":"<C…/G…>","captchaToken":"<turnstile>"}
+
+## Classic G… accounts
+
+G… needs Circle USDC trustline \`USDC:GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5\`. CLI preflights and returns \`trustline_required\` + \`helpUrl\` (Stellar Lab Fund Account). Never collect secrets — user adds trustline in Lab, then retries. C… skips trustline.
 `;
 
   return new Response(body, {

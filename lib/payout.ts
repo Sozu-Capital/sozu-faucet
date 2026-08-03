@@ -24,23 +24,65 @@ import {
   normalizeAddress,
   usdcToMinor,
 } from "@/lib/config";
+import { assertRecipientCanReceiveUsdc } from "@/lib/recipient";
 
 async function waitForResult(
   server: rpc.Server,
   hash: string,
   maxAttempts = 45,
-): Promise<"SUCCESS" | "FAILED" | "PENDING"> {
+): Promise<
+  | { status: "SUCCESS" }
+  | { status: "FAILED"; detail: string }
+  | { status: "PENDING" }
+> {
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     try {
       const tx = await server.getTransaction(hash);
-      if (tx.status === Api.GetTransactionStatus.SUCCESS) return "SUCCESS";
-      if (tx.status === Api.GetTransactionStatus.FAILED) return "FAILED";
+      if (tx.status === Api.GetTransactionStatus.SUCCESS) {
+        return { status: "SUCCESS" };
+      }
+      if (tx.status === Api.GetTransactionStatus.FAILED) {
+        let detail = "on-chain failure";
+        try {
+          detail = tx.resultXdr.result().switch().name;
+        } catch {
+          /* keep default */
+        }
+        const diags = tx.diagnosticEventsXdr ?? [];
+        for (const d of diags) {
+          if (typeof d === "string") continue;
+          try {
+            const topics = d
+              .event()
+              .body()
+              .value()
+              .topics()
+              .map((t) => {
+                try {
+                  const n = t.switch().name;
+                  if (n === "scvSymbol") return t.sym().toString();
+                  if (n === "scvString") return t.str().toString();
+                  return n;
+                } catch {
+                  return "?";
+                }
+              });
+            if (topics.some((t) => t === "error" || /trustline/i.test(t))) {
+              detail = topics.join(" ");
+              break;
+            }
+          } catch {
+            /* ignore malformed diagnostic */
+          }
+        }
+        return { status: "FAILED", detail };
+      }
     } catch {
       /* NOT_FOUND — keep polling */
     }
     await new Promise((r) => setTimeout(r, 1000));
   }
-  return "PENDING";
+  return { status: "PENDING" };
 }
 
 async function ensureTreasuryHasXlm(publicKey: string): Promise<void> {
@@ -91,12 +133,12 @@ async function submitTreasuryInvocation(operation: xdr.Operation): Promise<strin
   }
 
   const outcome = await waitForResult(server, sent.hash);
-  if (outcome === "FAILED") {
+  if (outcome.status === "FAILED") {
     throw new Error(
-      `Faucet payment failed on-chain (tx ${sent.hash.slice(0, 8)}…). Vault/treasury may be underfunded.`,
+      `Faucet payment failed on-chain (tx ${sent.hash.slice(0, 8)}…): ${outcome.detail}`,
     );
   }
-  if (outcome === "PENDING") {
+  if (outcome.status === "PENDING") {
     throw new Error(
       `Faucet payment still pending after timeout (tx ${sent.hash.slice(0, 8)}…).`,
     );
@@ -183,6 +225,8 @@ export async function sendFaucetPayment(params: {
   const amountScVal = nativeToScVal(usdcToMinor(params.amount, cfg.decimals), {
     type: "i128",
   });
+
+  await assertRecipientCanReceiveUsdc(to);
 
   const canCover = await vaultCanCoverClaim(params.amount);
   if (canCover !== true) {
