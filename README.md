@@ -193,6 +193,12 @@ Public terminal path: `POST /pow/challenge` → solve SHA-256 puzzle → `POST /
 
 Agent docs (live): `/agents.md`, `/llms.txt`.
 
+AI skill (Agent Skills): [`blessedux/agent-skills` → `sozu-faucet`](https://github.com/blessedux/agent-skills/tree/main/sozu-faucet)
+
+```bash
+npx skills add https://github.com/blessedux/agent-skills --skill sozu-faucet
+```
+
 ### Login with Sozu — OAuth-style handoff (planned v1.1)
 
 User clicks "Login with Sozu" → redirects to Wallet → passkey → back to faucet with short-lived JWT.

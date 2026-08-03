@@ -14,6 +14,8 @@ export type ClaimFailureReason =
   | FaucetUnavailableReason
   | "wallet_missing"
   | "payment_failed"
+  | "trustline_required"
+  | "account_missing"
   | "unauthorized"
   | "invalid_address"
   | "mainnet_refused"
@@ -59,6 +61,8 @@ export type FaucetClaimFailure = {
   error: string;
   reason: ClaimFailureReason;
   nextAvailableAt?: string;
+  /** Optional action link (e.g. Stellar Lab to add a USDC trustline). */
+  helpUrl?: string;
 };
 
 export type FaucetClaimResponse = FaucetClaimSuccess | FaucetClaimFailure;

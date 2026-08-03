@@ -35,6 +35,7 @@ type ClaimPayload = {
   error?: string;
   reason?: string;
   nextAvailableAt?: string;
+  helpUrl?: string;
 };
 
 function isValidStellarAddress(addr: string): boolean {
@@ -115,6 +116,22 @@ function modeAClaimErrorText(body: ClaimPayload): string {
       return `Daily faucet budget is used up.${when}`;
     case "insufficient_vault":
       return "Faucet treasury is empty right now. Try again after we refill.";
+    case "trustline_required":
+      return [
+        body.error ??
+          "This classic G… wallet needs a Circle USDC trustline before it can receive funds.",
+        body.helpUrl ? `Add it here: ${body.helpUrl}` : null,
+      ]
+        .filter(Boolean)
+        .join(" ");
+    case "account_missing":
+      return [
+        body.error ??
+          "Account not found on testnet. Fund with Friendbot, add a USDC trustline, then try again.",
+        body.helpUrl ? `Open: ${body.helpUrl}` : null,
+      ]
+        .filter(Boolean)
+        .join(" ");
     case "inactive":
       return "Faucet is temporarily inactive.";
     case "unauthorized":
@@ -486,12 +503,9 @@ export default function HomePage() {
             nextAt: claimBody.nextAvailableAt,
           });
         } else {
-          const when = claimBody.nextAvailableAt
-            ? ` Next available: ${formatCountdown(claimBody.nextAvailableAt)}.`
-            : "";
           setMessage({
             kind: "err",
-            text: `${claimBody.error ?? "Claim failed"} (${claimBody.reason}).${when}`,
+            text: modeAClaimErrorText(claimBody),
             nextAt: claimBody.nextAvailableAt,
           });
         }

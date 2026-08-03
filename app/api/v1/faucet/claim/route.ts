@@ -13,12 +13,14 @@ import {
 import { verifyCaptcha } from "@/lib/captcha";
 import { getFaucetConfig, normalizeAddress } from "@/lib/config";
 import { optionsResponse, withCors } from "@/lib/cors";
+import { classifyPaymentError } from "@/lib/payment-errors";
 import {
   getDispenserBalanceMinor,
   sendFaucetPayment,
   vaultCanCoverClaim,
 } from "@/lib/payout";
 import { consumePowProof } from "@/lib/pow";
+import { RecipientError, assertRecipientCanReceiveUsdc } from "@/lib/recipient";
 import { minorToUsdc } from "@/lib/config";
 import type { FaucetClaimResponse } from "@/lib/types";
 
@@ -194,6 +196,26 @@ export async function POST(request: Request) {
       return withCors(request, Response.json(res, { status: 503 }));
     }
 
+    // Fail closed on classic G… trustline / missing account before reserving a claim.
+    try {
+      await assertRecipientCanReceiveUsdc(walletAddress);
+    } catch (preflightErr) {
+      if (preflightErr instanceof RecipientError) {
+        const res: FaucetClaimResponse = {
+          success: false,
+          amount: claimAmount,
+          error: preflightErr.message,
+          reason: preflightErr.reason,
+          ...(preflightErr.helpUrl ? { helpUrl: preflightErr.helpUrl } : {}),
+        };
+        return withCors(
+          request,
+          Response.json(res, { status: preflightErr.status }),
+        );
+      }
+      throw preflightErr;
+    }
+
     // Reserve budget/cooldown before touching the chain.
     const claim = await createPendingClaim({
       userId,
@@ -230,24 +252,25 @@ export async function POST(request: Request) {
       await finalizeClaim({ claimId: claim.id, status: "failed" }).catch(
         (e) => console.error("[POST /v1/faucet/claim] finalize", e),
       );
-      const message =
-        payErr instanceof Error
-          ? payErr.message
-          : "Transfer could not be completed.";
-      const isUnderfunded =
-        message.includes("underfunded") ||
-        message.includes("InsufficientBalance");
+      const classified =
+        payErr instanceof RecipientError
+          ? {
+              reason: payErr.reason,
+              message: payErr.message,
+              status: payErr.status,
+              helpUrl: payErr.helpUrl,
+            }
+          : classifyPaymentError(payErr);
       const res: FaucetClaimResponse = {
         success: false,
         amount: claimAmount,
-        error: isUnderfunded
-          ? message
-          : "Transfer could not be completed. Try again in a moment.",
-        reason: isUnderfunded ? "insufficient_vault" : "payment_failed",
+        error: classified.message,
+        reason: classified.reason,
+        ...(classified.helpUrl ? { helpUrl: classified.helpUrl } : {}),
       };
       return withCors(
         request,
-        Response.json(res, { status: isUnderfunded ? 503 : 502 }),
+        Response.json(res, { status: classified.status }),
       );
     }
   } catch (err) {

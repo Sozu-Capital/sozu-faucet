@@ -43,6 +43,10 @@ Paste into your agent as a single action. Print the JSON.
 
 On the site: enter address → **Copy prompt** → paste into agent (same command).
 
+Agent Skill (install once, then say "get testnet dollars"):
+\`https://github.com/blessedux/agent-skills/blob/main/sozu-faucet/SKILL.md\`
+\`npx skills add https://github.com/blessedux/agent-skills --skill sozu-faucet\`
+
 ## Mode C — PoW (what the CLI uses)
 
 1. \`POST ${origin}/api/v1/faucet/pow/challenge\` body \`{"to":"<WALLET>"}\`
@@ -95,9 +99,19 @@ curl -sS "${origin}/api/v1/faucet/status?wallet=<C_OR_G_ADDRESS>"
 
 Failed claims do not consume cooldown.
 
+## Classic G… accounts
+
+G… wallets **cannot** receive Circle USDC until they have a trustline for
+\`USDC:GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5\`.
+\`npx @sozu/faucet\` detects this before PoW and returns
+\`reason: "trustline_required"\` with \`helpUrl\` pointing at Stellar Lab
+(Testnet Fund Account → Add trustline for USDC). The CLI never asks for a
+secret — the user signs in Lab / Freighter, then re-runs claim.
+C… smart accounts do not need a trustline — claim directly.
+
 ## Verify
 
-On success, open: \`https://stellar.expert/explorer/testnet/contract/<WALLET>\`
+On success, open Stellar Expert testnet for the wallet (contract/ for C…, account/ for G…).
 
 More: ${origin}/llms.txt · OpenAPI in repo \`openapi.yaml\`
 `;
