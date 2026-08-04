@@ -75,6 +75,10 @@ export async function ensureMigrated(): Promise<void> {
     `CREATE INDEX IF NOT EXISTS idx_claims_user_at
      ON faucet_claims (user_id, status, claimed_at)`,
   );
+  await client.execute(
+    `CREATE INDEX IF NOT EXISTS idx_claims_ip_status
+     ON faucet_claims (ip_hash, status)`,
+  );
 
   await client.execute(`
     CREATE TABLE IF NOT EXISTS faucet_pow_challenges (

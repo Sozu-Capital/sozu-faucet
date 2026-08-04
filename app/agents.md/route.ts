@@ -9,6 +9,7 @@ export async function GET(request: Request) {
   let claimAmount = 100;
   let cooldownMinutes = 60;
   let dailyLimit = 50000;
+  let ipTotalLimit = 1000;
   let slug = "sozu-testnet";
 
   try {
@@ -16,6 +17,7 @@ export async function GET(request: Request) {
     claimAmount = cfg.claimAmount;
     cooldownMinutes = cfg.cooldownMinutes;
     dailyLimit = cfg.dailyLimit;
+    ipTotalLimit = cfg.ipTotalLimit;
     slug = cfg.slug;
   } catch {
     // serve docs shell even if payout config is incomplete
@@ -30,7 +32,7 @@ export async function GET(request: Request) {
 
 Testnet Circle USDC (SAC). Base: \`${origin}\`
 
-**Each claim: ${claimAmount} USDC.** Cooldown: ${cooldownMinutes}m. Daily budget: ${dailyLimit} USDC.
+**Each claim: ${claimAmount} USDC.** Cooldown: ${cooldownMinutes}m. Daily budget: ${dailyLimit} USDC. Per-IP lifetime cap: ${ipTotalLimit} USDC.
 
 ## Happy path (preferred)
 
@@ -100,6 +102,7 @@ curl -sS "${origin}/api/v1/faucet/status?wallet=<C_OR_G_ADDRESS>"
 | Claim amount | ${claimAmount} USDC |
 | Per-wallet cooldown | ${cooldownMinutes} minutes |
 | Daily budget | ${dailyLimit} USDC |
+| Per-IP lifetime cap | ${ipTotalLimit} USDC |
 | Slug | ${slug} |
 | Network | Stellar testnet |
 

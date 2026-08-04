@@ -114,6 +114,8 @@ function modeAClaimErrorText(body: ClaimPayload): string {
       return `You're on cooldown — try again later.${when}`;
     case "empty_today":
       return `Daily faucet budget is used up.${when}`;
+    case "ip_limit":
+      return "This network address has reached its faucet claim limit.";
     case "insufficient_vault":
       return "Faucet treasury is empty right now. Try again after we refill.";
     case "trustline_required":
@@ -543,6 +545,7 @@ export default function HomePage() {
     (walletStatus.availability.reason === "user_cooldown" ||
       walletStatus.availability.reason === "global_cooldown" ||
       walletStatus.availability.reason === "empty_today" ||
+      walletStatus.availability.reason === "ip_limit" ||
       walletStatus.availability.reason === "inactive" ||
       walletStatus.availability.reason === "insufficient_vault");
 

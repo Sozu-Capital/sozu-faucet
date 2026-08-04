@@ -42,6 +42,7 @@ FAUCET_CLAIM_AMOUNT=100
 FAUCET_DAILY_LIMIT=50000
 FAUCET_COOLDOWN_MINUTES=60
 FAUCET_GLOBAL_COOLDOWN_MINUTES=0
+FAUCET_IP_TOTAL_LIMIT=1000
 
 # Auth
 FAUCET_AUTH_SECRET=...       # shared with Wallet for Mode A (≥16 chars)
@@ -308,6 +309,15 @@ FROM faucet_claims
 WHERE status = 'success'
 GROUP BY day
 ORDER BY day DESC;
+
+-- Per-IP lifetime spend (pending + success; FAUCET_IP_TOTAL_LIMIT=1000)
+SELECT ip_hash, COUNT(*) AS n, SUM(amount) AS usdc
+FROM faucet_claims
+WHERE status IN ('pending', 'success')
+  AND ip_hash IS NOT NULL
+GROUP BY ip_hash
+ORDER BY usdc DESC
+LIMIT 20;
 ```
 
 ---

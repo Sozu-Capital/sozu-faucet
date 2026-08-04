@@ -8,7 +8,8 @@ export type FaucetUnavailableReason =
   | "empty_today"
   | "insufficient_vault"
   | "global_cooldown"
-  | "user_cooldown";
+  | "user_cooldown"
+  | "ip_limit";
 
 export type ClaimFailureReason =
   | FaucetUnavailableReason

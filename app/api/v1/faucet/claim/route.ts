@@ -162,9 +162,22 @@ export async function POST(request: Request) {
   }
 
   try {
+    const ipHash = softHash(clientIp(request));
+    if (cfg.ipTotalLimit > 0 && !ipHash) {
+      const res: FaucetClaimResponse = {
+        success: false,
+        amount: cfg.claimAmount,
+        error:
+          "Could not determine client IP for abuse limits. Retry from a normal network path.",
+        reason: "ip_limit",
+      };
+      return withCors(request, Response.json(res, { status: 429 }));
+    }
+
     const availability = await computeAvailability({
       userId,
       walletAddress,
+      ipHash,
     });
 
     if (!availability.available) {
@@ -175,7 +188,12 @@ export async function POST(request: Request) {
         reason: availability.reason ?? "user_cooldown",
         nextAvailableAt: availability.nextAvailableAt,
       };
-      return withCors(request, Response.json(res, { status: 409 }));
+      return withCors(
+        request,
+        Response.json(res, {
+          status: availability.reason === "ip_limit" ? 429 : 409,
+        }),
+      );
     }
 
     const claimAmount = cfg.claimAmount;
@@ -221,7 +239,7 @@ export async function POST(request: Request) {
       userId,
       walletAddress,
       amount: claimAmount,
-      ipHash: softHash(clientIp(request)),
+      ipHash,
       userAgentHash: softHash(request.headers.get("user-agent")),
     });
 
@@ -298,6 +316,8 @@ function humanReason(reason: string | undefined): string {
       return "Faucet is cooling down. Try again shortly.";
     case "user_cooldown":
       return "You already claimed recently. Wait for the cooldown to end.";
+    case "ip_limit":
+      return "This network address has reached its faucet claim limit.";
     default:
       return "Faucet not available.";
   }
