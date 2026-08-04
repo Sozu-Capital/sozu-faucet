@@ -1,3 +1,5 @@
+import { stellarExpertUrl } from "@/lib/stellar-expert";
+
 /** Clipboard / agent paste: one npx claim command (Mode C PoW). */
 
 export function buildNpxAgentPrompt(params: {
@@ -6,7 +8,7 @@ export function buildNpxAgentPrompt(params: {
   faucetUrl?: string;
 }): string {
   const wallet = params.wallet.trim().toUpperCase();
-  const expert = `https://stellar.expert/explorer/testnet/contract/${wallet}`;
+  const expert = stellarExpertUrl(wallet);
   const urlFlag = params.faucetUrl
     ? ` --url ${params.faucetUrl.replace(/\/$/, "")}`
     : "";
@@ -32,7 +34,7 @@ export function buildAgentClaimPrompt(params: {
   const base = params.baseUrl.replace(/\/$/, "");
   const ttl = params.expiresInSeconds ?? 300;
   const mins = Math.max(1, Math.round(ttl / 60));
-  const expert = `https://stellar.expert/explorer/testnet/contract/${params.wallet}`;
+  const expert = stellarExpertUrl(params.wallet);
 
   return `Claim ${params.claimAmount} testnet USDC from Sozu Faucet (token expires in ~${mins}m):
 

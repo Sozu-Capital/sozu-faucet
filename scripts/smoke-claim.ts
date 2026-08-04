@@ -51,8 +51,9 @@ async function main() {
 
   if (!claimBody.success) process.exit(1);
 
+  const kind = to.trim().toUpperCase().startsWith("G") ? "account" : "contract";
   console.log(
-    `\nVerify on Stellar Expert (testnet):\nhttps://stellar.expert/explorer/testnet/contract/${to}`,
+    `\nVerify on Stellar Expert (testnet):\nhttps://stellar.expert/explorer/testnet/${kind}/${to.trim().toUpperCase()}`,
   );
 }
 

@@ -11,6 +11,7 @@ import {
   walletHandoffUrl,
   type FaucetSession,
 } from "@/lib/faucet-session";
+import { stellarExpertUrl } from "@/lib/stellar-expert";
 
 type StatusPayload = {
   faucet: {
@@ -590,9 +591,7 @@ Print the JSON. If wallet.secret is present, tell the user to save it once (show
 On success, open Stellar Expert for wallet.address / to.`;
     }
 
-    const explorer = wallet.startsWith("G")
-      ? `https://stellar.expert/explorer/testnet/account/${wallet}`
-      : `https://stellar.expert/explorer/testnet/contract/${wallet}`;
+    const explorer = stellarExpertUrl(wallet);
 
     return `Claim ${claimAmount} testnet USDC (Circle SAC) from Sozu Faucet for ${wallet}.
 
@@ -780,7 +779,7 @@ ${explorer}`;
                   </button>
                 </div>
                 <a
-                  href={`https://stellar.expert/explorer/testnet/contract/${message.to}`}
+                  href={stellarExpertUrl(message.to)}
                   target="_blank"
                   rel="noopener noreferrer"
                   style={{
