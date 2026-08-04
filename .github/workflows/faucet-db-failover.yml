@@ -1,0 +1,374 @@
+# If /api/health is down with a Turso/libsql fingerprint, spin a fresh DB in the
+# failover region, point Vercel at it, redeploy, and ntfy the phone.
+#
+# Required secrets:
+#   NTFY_TOPIC
+#   TURSO_API_TOKEN   — `turso auth api-tokens mint sozu-faucet-gh`
+#   VERCEL_TOKEN      — Vercel account token with project env + deploy access
+#
+# Required variables:
+#   TURSO_ORG                 e.g. blessedux
+#   TURSO_ACTIVE_GROUP        e.g. sozu-faucet
+#   TURSO_ACTIVE_DB           e.g. sozu-faucet-live
+#   TURSO_FAILOVER_LOCATION   e.g. aws-eu-west-1
+#   VERCEL_ORG_ID
+#   VERCEL_PROJECT_ID
+#
+# Optional variables:
+#   FAUCET_HEALTH_URL         default https://faucet.sozu.capital/api/health
+#
+# Side effect: fresh DB clears claim cooldowns / daily spend / IP caps until
+# traffic rebuilds that state. On-chain treasury is untouched.
+
+name: Faucet DB failover
+
+on:
+  schedule:
+    # Every 15 minutes
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Force failover even if health looks OK (ops drill)"
+        type: boolean
+        default: false
+
+concurrency:
+  group: faucet-db-failover
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: read
+  variables: write
+
+jobs:
+  failover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Detect outage / decide
+        id: detect
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          HEALTH_URL: ${{ vars.FAUCET_HEALTH_URL || 'https://faucet.sozu.capital/api/health' }}
+          FORCE: ${{ inputs.force || false }}
+        run: |
+          set -euo pipefail
+          if [ -z "${NTFY_TOPIC:-}" ]; then
+            echo "Missing secret NTFY_TOPIC"
+            exit 1
+          fi
+
+          notify() {
+            local title="$1" priority="$2" tags="$3" body="$4"
+            curl -sS \
+              -H "Title: ${title}" \
+              -H "Priority: ${priority}" \
+              -H "Tags: ${tags}" \
+              -d "${body}" \
+              "https://ntfy.sh/${NTFY_TOPIC}" >/dev/null || true
+          }
+
+          fails=0
+          last_code=""
+          last_body=""
+          for i in 1 2 3; do
+            BODY="$(mktemp)"
+            CODE="$(curl -sS -o "$BODY" -w "%{http_code}" --max-time 25 "$HEALTH_URL" || echo "000")"
+            last_code="$CODE"
+            last_body="$(cat "$BODY")"
+            echo "probe=$i http=$CODE body=$(echo "$last_body" | head -c 200)"
+            if [ "$CODE" != "200" ]; then
+              fails=$((fails + 1))
+            fi
+            rm -f "$BODY"
+            sleep 8
+          done
+
+          NEED=false
+          REASON=""
+          if [ "$FORCE" = "true" ]; then
+            NEED=true
+            REASON="forced via workflow_dispatch"
+          elif [ "$fails" -ge 3 ]; then
+            # Turso/libsql fingerprint from today's outage
+            if echo "$last_body" | grep -qiE 'SERVER_ERROR|Server returned HTTP status 502|connect to upstream failed'; then
+              NEED=true
+              REASON="health down x3 with Turso fingerprint (last HTTP ${last_code})"
+            elif [ "$last_code" = "503" ] || [ "$last_code" = "500" ]; then
+              NEED=true
+              REASON="health down x3 (last HTTP ${last_code}) — assuming DB path"
+            else
+              notify "Sozu Faucet DOWN (no auto-failover)" urgent "warning,skull" \
+                "Health failed x3 (HTTP ${last_code}) but error did not look like Turso. Manual check: ${HEALTH_URL}"
+              echo "Outage without Turso fingerprint — alert only"
+              echo "need=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
+
+          if [ "$NEED" != "true" ]; then
+            echo "Healthy — no failover"
+            echo "need=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          notify "Sozu Faucet DB failover STARTING" urgent "rotating_light,database" \
+            "GitHub Action starting Turso failover. Reason: ${REASON}. Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          echo "need=true" >> "$GITHUB_OUTPUT"
+          echo "reason=${REASON}" >> "$GITHUB_OUTPUT"
+
+      - name: Provision fresh Turso DB + cut over Vercel
+        if: steps.detect.outputs.need == 'true'
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          TURSO_API_TOKEN: ${{ secrets.TURSO_API_TOKEN }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          TURSO_ORG: ${{ vars.TURSO_ORG }}
+          TURSO_ACTIVE_GROUP: ${{ vars.TURSO_ACTIVE_GROUP }}
+          TURSO_ACTIVE_DB: ${{ vars.TURSO_ACTIVE_DB }}
+          TURSO_FAILOVER_LOCATION: ${{ vars.TURSO_FAILOVER_LOCATION }}
+          VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
+          HEALTH_URL: ${{ vars.FAUCET_HEALTH_URL || 'https://faucet.sozu.capital/api/health' }}
+          REASON: ${{ steps.detect.outputs.reason }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          notify() {
+            local title="$1" priority="$2" tags="$3" body="$4"
+            curl -sS \
+              -H "Title: ${title}" \
+              -H "Priority: ${priority}" \
+              -H "Tags: ${tags}" \
+              -d "${body}" \
+              "https://ntfy.sh/${NTFY_TOPIC}" >/dev/null || true
+          }
+
+          fail() {
+            notify "Sozu Faucet DB failover FAILED" urgent "x,database" "$1"
+            echo "$1"
+            exit 1
+          }
+
+          for req in TURSO_API_TOKEN VERCEL_TOKEN TURSO_ORG TURSO_ACTIVE_GROUP TURSO_FAILOVER_LOCATION VERCEL_ORG_ID VERCEL_PROJECT_ID; do
+            if [ -z "${!req:-}" ]; then
+              fail "Missing required secret/var: $req"
+            fi
+          done
+
+          STAMP="$(date -u +%Y%m%d%H%M%S)"
+          NEW_GROUP="sozu-f${STAMP}"
+          # Turso DB names: lowercase, max 64ish; keep short
+          NEW_DB="sozu-live-${STAMP}"
+          API="https://api.turso.tech/v1/organizations/${TURSO_ORG}"
+
+          echo "Creating failover group ${NEW_GROUP} at ${TURSO_FAILOVER_LOCATION}..."
+          CREATE_GROUP="$(curl -sS -m 60 -X POST "${API}/groups" \
+            -H "Authorization: Bearer ${TURSO_API_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "{\"name\":\"${NEW_GROUP}\",\"location\":\"${TURSO_FAILOVER_LOCATION}\"}" \
+            -w "\n__HTTP__%{http_code}")"
+          GROUP_HTTP="${CREATE_GROUP##*__HTTP__}"
+          GROUP_BODY="${CREATE_GROUP%__HTTP__*}"
+          echo "create_group http=${GROUP_HTTP} body=$(echo "$GROUP_BODY" | head -c 400)"
+
+          USE_GROUP="$NEW_GROUP"
+          if [ "$GROUP_HTTP" != "200" ]; then
+            # Starter often allows only one extra group — fall back to active group
+            # only if that group's region still answers.
+            echo "New group failed — falling back to existing group ${TURSO_ACTIVE_GROUP}"
+            USE_GROUP="$TURSO_ACTIVE_GROUP"
+          fi
+
+          echo "Creating database ${NEW_DB} in group ${USE_GROUP}..."
+          CREATE_DB="$(curl -sS -m 60 -X POST "${API}/databases" \
+            -H "Authorization: Bearer ${TURSO_API_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "{\"name\":\"${NEW_DB}\",\"group\":\"${USE_GROUP}\"}" \
+            -w "\n__HTTP__%{http_code}")"
+          DB_HTTP="${CREATE_DB##*__HTTP__}"
+          DB_BODY="${CREATE_DB%__HTTP__*}"
+          echo "create_db http=${DB_HTTP} body=$(echo "$DB_BODY" | head -c 400)"
+          if [ "$DB_HTTP" != "200" ]; then
+            fail "Turso create database failed (HTTP ${DB_HTTP}): ${DB_BODY}"
+          fi
+
+          HOSTNAME="$(python3 -c "import json,sys; d=json.loads(sys.argv[1]); print((d.get('database') or d).get('Hostname') or (d.get('database') or d).get('hostname') or '')" "$DB_BODY")"
+          if [ -z "$HOSTNAME" ]; then
+            fail "Turso create DB response missing hostname: ${DB_BODY}"
+          fi
+          DB_URL="libsql://${HOSTNAME}"
+          echo "hostname=${HOSTNAME}"
+
+          TOKEN_RESP="$(curl -sS -m 30 -X POST "${API}/databases/${NEW_DB}/auth/tokens?expiration=never&authorization=full-access" \
+            -H "Authorization: Bearer ${TURSO_API_TOKEN}" \
+            -w "\n__HTTP__%{http_code}")"
+          TOK_HTTP="${TOKEN_RESP##*__HTTP__}"
+          TOK_BODY="${TOKEN_RESP%__HTTP__*}"
+          if [ "$TOK_HTTP" != "200" ]; then
+            fail "Turso token create failed (HTTP ${TOK_HTTP}): ${TOK_BODY}"
+          fi
+          DB_TOKEN="$(python3 -c "import json,sys; print(json.loads(sys.argv[1]).get('jwt') or '')" "$TOK_BODY")"
+          if [ -z "$DB_TOKEN" ]; then
+            fail "Turso token response missing jwt"
+          fi
+
+          # Bootstrap schema via temporary Node + @libsql/client
+          npm install --no-save @libsql/client@0.15.15 >/dev/null
+          DB_URL="$DB_URL" DB_TOKEN="$DB_TOKEN" node <<'NODE'
+          const { createClient } = require("@libsql/client");
+          const client = createClient({
+            url: process.env.DB_URL,
+            authToken: process.env.DB_TOKEN,
+          });
+          (async () => {
+            await client.execute(`
+              CREATE TABLE IF NOT EXISTS faucet_claims (
+                id TEXT PRIMARY KEY NOT NULL,
+                faucet_slug TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                wallet_address TEXT NOT NULL,
+                amount INTEGER NOT NULL,
+                status TEXT NOT NULL,
+                tx_hash TEXT,
+                ip_hash TEXT,
+                user_agent_hash TEXT,
+                claimed_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+              )
+            `);
+            await client.execute(
+              `CREATE INDEX IF NOT EXISTS idx_claims_slug_status_at
+               ON faucet_claims (faucet_slug, status, claimed_at)`,
+            );
+            await client.execute(
+              `CREATE INDEX IF NOT EXISTS idx_claims_wallet_at
+               ON faucet_claims (wallet_address, status, claimed_at)`,
+            );
+            await client.execute(
+              `CREATE INDEX IF NOT EXISTS idx_claims_user_at
+               ON faucet_claims (user_id, status, claimed_at)`,
+            );
+            await client.execute(
+              `CREATE INDEX IF NOT EXISTS idx_claims_ip_status
+               ON faucet_claims (ip_hash, status)`,
+            );
+            await client.execute(`
+              CREATE TABLE IF NOT EXISTS faucet_pow_challenges (
+                id TEXT PRIMARY KEY NOT NULL,
+                wallet_address TEXT NOT NULL,
+                difficulty INTEGER NOT NULL,
+                prefix TEXT NOT NULL,
+                expires_at TEXT NOT NULL,
+                consumed_at TEXT,
+                ip_hash TEXT,
+                created_at TEXT NOT NULL
+              )
+            `);
+            await client.execute(
+              `CREATE INDEX IF NOT EXISTS idx_pow_ip_created
+               ON faucet_pow_challenges (ip_hash, created_at)`,
+            );
+            await client.execute(
+              `CREATE INDEX IF NOT EXISTS idx_pow_wallet_created
+               ON faucet_pow_challenges (wallet_address, created_at)`,
+            );
+            const r = await client.execute("SELECT 1 AS ok");
+            console.log("schema_ok", r.rows[0]);
+          })().catch((e) => {
+            console.error(e);
+            process.exit(1);
+          });
+          NODE
+
+          export DB_URL DB_TOKEN
+
+          # Upsert Vercel env (production + preview) with safe JSON encoding
+          python3 <<'PY'
+          import json, os, urllib.request
+          token = os.environ["VERCEL_TOKEN"]
+          project = os.environ["VERCEL_PROJECT_ID"]
+          team = os.environ["VERCEL_ORG_ID"]
+          db_url = os.environ["DB_URL"]
+          db_token = os.environ["DB_TOKEN"]
+
+          def req(method, url, body=None):
+              data = None if body is None else json.dumps(body).encode()
+              r = urllib.request.Request(url, data=data, method=method, headers={
+                  "Authorization": f"Bearer {token}",
+                  "Content-Type": "application/json",
+              })
+              with urllib.request.urlopen(r, timeout=45) as resp:
+                  return json.loads(resp.read().decode() or "{}")
+
+          base = f"https://api.vercel.com/v9/projects/{project}/env?teamId={team}"
+          listed = req("GET", base)
+          envs = listed.get("envs") or []
+          for key in ("DATABASE_URL", "TURSO_AUTH_TOKEN"):
+              for e in envs:
+                  if e.get("key") == key:
+                      del_url = f"https://api.vercel.com/v9/projects/{project}/env/{e['id']}?teamId={team}"
+                      try:
+                          req("DELETE", del_url)
+                          print("deleted", key, e["id"])
+                      except Exception as ex:
+                          print("delete warn", key, ex)
+
+          create_url = f"https://api.vercel.com/v10/projects/{project}/env?teamId={team}"
+          for key, value in (("DATABASE_URL", db_url), ("TURSO_AUTH_TOKEN", db_token)):
+              out = req("POST", create_url, {
+                  "key": key,
+                  "value": value,
+                  "type": "encrypted",
+                  "target": ["production", "preview"],
+              })
+              print("created", key, out.get("created") or out.get("key") or "ok")
+          PY
+
+          # Redeploy latest production deployment
+          DEPLS="$(curl -sS -m 30 -H "Authorization: Bearer ${VERCEL_TOKEN}" \
+            "https://api.vercel.com/v6/deployments?projectId=${VERCEL_PROJECT_ID}&target=production&limit=1&teamId=${VERCEL_ORG_ID}")"
+          DEPLOY_ID="$(python3 -c "import json,sys; d=json.loads(sys.argv[1]); print((d.get('deployments') or [{}])[0].get('uid') or '')" "$DEPLS")"
+          if [ -z "$DEPLOY_ID" ]; then
+            fail "Could not find a production deployment to redeploy"
+          fi
+          echo "Redeploying ${DEPLOY_ID}..."
+          REDEPLOY="$(curl -sS -m 60 -X POST \
+            -H "Authorization: Bearer ${VERCEL_TOKEN}" \
+            -H "Content-Type: application/json" \
+            "https://api.vercel.com/v13/deployments/${DEPLOY_ID}/redeploy?teamId=${VERCEL_ORG_ID}" \
+            -d '{}' \
+            -w "\n__HTTP__%{http_code}")"
+          RD_HTTP="${REDEPLOY##*__HTTP__}"
+          RD_BODY="${REDEPLOY%__HTTP__*}"
+          echo "redeploy http=${RD_HTTP}"
+          if [ "$RD_HTTP" != "200" ] && [ "$RD_HTTP" != "201" ]; then
+            fail "Vercel redeploy failed (HTTP ${RD_HTTP}): $(echo "$RD_BODY" | head -c 400)"
+          fi
+
+          # Wait for health
+          ok=false
+          for i in $(seq 1 24); do
+            CODE="$(curl -sS -o /tmp/health.json -w "%{http_code}" --max-time 25 "$HEALTH_URL" || echo "000")"
+            echo "post-failover probe=$i http=$CODE"
+            if [ "$CODE" = "200" ]; then
+              ok=true
+              break
+            fi
+            sleep 10
+          done
+
+          # Persist active pointers for next run
+          gh variable set TURSO_ACTIVE_DB --body "$NEW_DB"
+          gh variable set TURSO_ACTIVE_GROUP --body "$USE_GROUP"
+
+          if [ "$ok" = true ]; then
+            notify "Sozu Faucet DB failover OK" high "white_check_mark,database" \
+              "Cut over to ${NEW_DB} (group ${USE_GROUP}, ${TURSO_FAILOVER_LOCATION} preferred). Claim cooldowns reset. Health 200. Reason: ${REASON}. Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+            echo "Failover complete → ${NEW_DB}"
+          else
+            fail "Redeployed but health still not 200 after wait. DB=${NEW_DB} group=${USE_GROUP}"
+          fi

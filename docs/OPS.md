@@ -224,7 +224,6 @@ npm run ops:topup -- 100
 ```
 
 ### Check balance / dry-run
-
 ```bash
 npm run ops:balance
 curl -s localhost:3010/api/health | jq
@@ -290,7 +289,7 @@ When rotating `FAUCET_AUTH_SECRET`:
 Query Turso DB:
 
 ```bash
-turso db shell sozu-faucet-prod
+turso db shell sozu-faucet-live
 ```
 
 ```sql
@@ -329,4 +328,18 @@ LIMIT 20;
 - Keep `ALLOWED_ORIGINS` tight (only trusted domains).
 - Never disable captcha in production (`FAUCET_REQUIRE_CAPTCHA=true` or `NODE_ENV=production`).
 - Low-balance phone alerts: GitHub Action [`.github/workflows/faucet-balance-alert.yml`](../.github/workflows/faucet-balance-alert.yml) → [ntfy.sh](https://ntfy.sh). Default alert **&lt; 5000 USDC**, panic **&lt; 500 USDC**. Requires repo secret `NTFY_TOPIC`.
+- Turso outage auto-failover: [`.github/workflows/faucet-db-failover.yml`](../.github/workflows/faucet-db-failover.yml) (every 15m). On repeated `/api/health` failures with a libsql/Turso fingerprint, creates a fresh DB (prefers `TURSO_FAILOVER_LOCATION`), updates Vercel `DATABASE_URL` + `TURSO_AUTH_TOKEN`, redeploys, and ntfy’s start/success/fail. **Resets claim cooldowns / daily spend / IP caps** (treasury untouched). Secrets: `NTFY_TOPIC`, `TURSO_API_TOKEN`, `VERCEL_TOKEN`.
+- Turso snapshots while healthy: [`.github/workflows/faucet-db-backup.yml`](../.github/workflows/faucet-db-backup.yml) every 6h → Actions artifact (14d). Export is impossible once the primary’s data plane is dead — take backups *before* that.
 - Circle testnet faucet has its own rate limits — request early/often as needed.
+
+### Turso DB pointers (GitHub Variables)
+
+| Variable | Purpose |
+|----------|---------|
+| `TURSO_ORG` | Platform org slug (`blessedux`) |
+| `TURSO_ACTIVE_GROUP` | Live group (currently `sozu-faucet` / aws-us-west-2) |
+| `TURSO_ACTIVE_DB` | Live DB name (currently `sozu-faucet-live`) |
+| `TURSO_FAILOVER_LOCATION` | Preferred region for new group (`aws-eu-west-1`) |
+| `VERCEL_ORG_ID` / `VERCEL_PROJECT_ID` | Target for env cutover |
+
+Legacy us-east-1 DBs (`sozu-faucet-prod`, `sozu-faucet-prod-v2`) may refuse `destroy` until Turso’s data plane there recovers — delete when `turso db shell` works again.

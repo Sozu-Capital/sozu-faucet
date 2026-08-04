@@ -1,0 +1,83 @@
+# While Turso is healthy, dump a snapshot so we are not stuck with zero history
+# if the primary dies (today's outage: export was impossible once upstream failed).
+#
+# Required secrets: TURSO_API_TOKEN, NTFY_TOPIC
+# Required variables: TURSO_ORG, TURSO_ACTIVE_DB
+#
+# Artifacts retain 14 days. This is a point-in-time SQLite file, not a live replica.
+
+name: Faucet DB backup
+
+on:
+  schedule:
+    # Every 6 hours
+    - cron: "20 */6 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: faucet-db-backup
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Install Turso CLI
+        run: |
+          set -euo pipefail
+          curl -sSfL https://get.tur.so/install.sh | bash
+          echo "$HOME/.turso" >> "$GITHUB_PATH"
+
+      - name: Export active DB
+        id: export
+        env:
+          TURSO_API_TOKEN: ${{ secrets.TURSO_API_TOKEN }}
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          TURSO_ORG: ${{ vars.TURSO_ORG }}
+          TURSO_ACTIVE_DB: ${{ vars.TURSO_ACTIVE_DB }}
+        run: |
+          set -euo pipefail
+
+          notify() {
+            local title="$1" priority="$2" tags="$3" body="$4"
+            curl -sS \
+              -H "Title: ${title}" \
+              -H "Priority: ${priority}" \
+              -H "Tags: ${tags}" \
+              -d "${body}" \
+              "https://ntfy.sh/${NTFY_TOPIC}" >/dev/null || true
+          }
+
+          if [ -z "${TURSO_API_TOKEN:-}" ] || [ -z "${TURSO_ACTIVE_DB:-}" ]; then
+            echo "Missing TURSO_API_TOKEN or TURSO_ACTIVE_DB"
+            exit 1
+          fi
+
+          # CLI reads TURSO_API_TOKEN from the environment (no interactive login).
+          OUT="sozu-faucet-${TURSO_ACTIVE_DB}-$(date -u +%Y%m%dT%H%M%SZ).db"
+          if ! turso db export "$TURSO_ACTIVE_DB" --output-file "$OUT" --overwrite; then
+            notify "Sozu Faucet DB backup FAILED" high "warning,database" \
+              "turso db export ${TURSO_ACTIVE_DB} failed. If the primary is down, run the failover workflow. Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+            exit 1
+          fi
+
+          ls -la "$OUT"
+          echo "file=${OUT}" >> "$GITHUB_OUTPUT"
+
+          SIZE="$(wc -c < "$OUT" | tr -d ' ')"
+          echo "bytes=${SIZE}"
+          if [ "$SIZE" -lt 1000 ]; then
+            echo "Warning: snapshot unusually small (${SIZE} bytes)"
+          fi
+
+      - name: Upload snapshot artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: turso-${{ vars.TURSO_ACTIVE_DB }}-${{ github.run_id }}
+          path: ${{ steps.export.outputs.file }}
+          retention-days: 14
+          if-no-files-found: error
