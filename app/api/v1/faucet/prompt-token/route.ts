@@ -1,5 +1,5 @@
 import { anonUserId, buildAgentClaimPrompt } from "@/lib/agent-prompt";
-import { mintFaucetToken } from "@/lib/auth";
+import { clientIp, mintFaucetToken, softHash } from "@/lib/auth";
 import { computeAvailability } from "@/lib/availability";
 import { verifyCaptcha } from "@/lib/captcha";
 import { getFaucetConfig, normalizeAddress } from "@/lib/config";
@@ -110,7 +110,11 @@ export async function POST(request: Request) {
   }
 
   const userId = anonUserId(wallet);
-  const availability = await computeAvailability({ userId, walletAddress: wallet });
+  const availability = await computeAvailability({
+    userId,
+    walletAddress: wallet,
+    ipHash: softHash(clientIp(request)),
+  });
 
   if (!availability.available) {
     return withCors(
@@ -121,7 +125,7 @@ export async function POST(request: Request) {
           reason: availability.reason ?? "user_cooldown",
           nextAvailableAt: availability.nextAvailableAt,
         },
-        { status: 409 },
+        { status: availability.reason === "ip_limit" ? 429 : 409 },
       ),
     );
   }

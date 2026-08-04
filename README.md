@@ -93,7 +93,7 @@ Public. Optional `Authorization: Bearer <JWT>` adds user cooldown.
 }
 ```
 
-Reasons: `inactive | empty_today | insufficient_vault | global_cooldown | user_cooldown`
+Reasons: `inactive | empty_today | insufficient_vault | global_cooldown | user_cooldown | ip_limit`
 
 ### `POST /api/v1/faucet/pow/challenge`
 
@@ -156,13 +156,14 @@ Ops: vault/treasury balance, `canCoverClaim`, daily remaining.
 | Per claim | **100 USDC** | `FAUCET_CLAIM_AMOUNT` |
 | Per-user / per-wallet cooldown | **60 minutes** | `FAUCET_COOLDOWN_MINUTES` |
 | Daily budget | **50000 USDC** (500 × 100) | `FAUCET_DAILY_LIMIT` |
+| Per-IP lifetime cap | **1000 USDC** | `FAUCET_IP_TOTAL_LIMIT` |
 | Global gap between claims | off | `FAUCET_GLOBAL_COOLDOWN_MINUTES` |
 | PoW difficulty (Mode C) | 20 leading zero bits | `FAUCET_POW_DIFFICULTY` |
 | PoW challenge TTL | 300s | `FAUCET_POW_TTL_SECONDS` |
 | PoW challenges / IP / min | 10 | `FAUCET_POW_CHALLENGE_PER_IP_PER_MIN` |
 | Soft abuse signals | IP hash + UA hash | `FAUCET_HASH_SALT` |
 
-Failed claims do **not** consume cooldown or daily budget.
+Failed claims do **not** consume cooldown, daily budget, or the per-IP cap.
 
 ---
 
@@ -196,7 +197,7 @@ Public claim UI: paste C…/G… + Turnstile captcha + strict per-wallet cooldow
 
 ### Mode C — PoW + CLI (implemented)
 
-Public terminal path: `POST /pow/challenge` → solve SHA-256 puzzle → `POST /claim` with `{ to, pow }`. Abuse cost is CPU time; wallet cooldown + daily budget still apply.
+Public terminal path: `POST /pow/challenge` → solve SHA-256 puzzle → `POST /claim` with `{ to, pow }`. Abuse cost is CPU time; wallet cooldown, daily budget, and per-IP lifetime cap still apply.
 
 Agent docs (live): `/agents.md`, `/llms.txt`.
 

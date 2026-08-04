@@ -1,5 +1,5 @@
 import { anonUserId } from "@/lib/agent-prompt";
-import { resolveAuth } from "@/lib/auth";
+import { clientIp, resolveAuth, softHash } from "@/lib/auth";
 import {
   computeAvailability,
   toPublicFaucet,
@@ -70,6 +70,7 @@ export async function GET(request: Request) {
     let availability = await computeAvailability({
       userId,
       walletAddress,
+      ipHash: softHash(clientIp(request)),
     });
 
     const claimAmount = getFaucetConfig().claimAmount;

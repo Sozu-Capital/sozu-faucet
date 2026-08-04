@@ -65,6 +65,12 @@ export function getFaucetConfig() {
     cooldownMinutes: envNumber("FAUCET_COOLDOWN_MINUTES", 60),
     globalCooldownMinutes: envNumber("FAUCET_GLOBAL_COOLDOWN_MINUTES", 0),
     /**
+     * Lifetime USDC cap per soft-hashed client IP (pending + success).
+     * Blocks new-wallet drain scripts that rotate recipients from one IP.
+     * Set 0 to disable.
+     */
+    ipTotalLimit: envNumber("FAUCET_IP_TOTAL_LIMIT", 1000),
+    /**
      * Mode C PoW: leading zero bits on SHA-256(prefix:id:to:nonce).
      * ~20 ≈ a few seconds on a laptop CPU.
      */

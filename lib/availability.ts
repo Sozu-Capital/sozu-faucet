@@ -31,13 +31,16 @@ export function toPublicFaucet(): FaucetPublic {
 /**
  * Abuse rules (order matters):
  * 1. inactive
- * 2. daily budget exhausted (pending + success count)
- * 3. global cooldown
- * 4. user / wallet cooldown
+ * 2. daily budget exhausted (pending + success)
+ * 3. per-IP lifetime USDC cap (pending + success)
+ * 4. global cooldown
+ * 5. user / wallet cooldown
  */
 export async function computeAvailability(opts: {
   userId?: string | null;
   walletAddress?: string | null;
+  /** Soft-hashed client IP; required to enforce FAUCET_IP_TOTAL_LIMIT on claims. */
+  ipHash?: string | null;
 }): Promise<FaucetAvailability> {
   await ensureMigrated();
   const cfg = getFaucetConfig();
@@ -72,6 +75,30 @@ export async function computeAvailability(opts: {
       remainingToday,
       nextAvailableAt: nextUtcMidnight(now).toISOString(),
     };
+  }
+
+  if (cfg.ipTotalLimit > 0 && opts.ipHash) {
+    const [ipRow] = await db
+      .select({
+        total: sql<number>`coalesce(sum(${faucetClaims.amount}), 0)`,
+      })
+      .from(faucetClaims)
+      .where(
+        and(
+          eq(faucetClaims.faucetSlug, cfg.slug),
+          eq(faucetClaims.ipHash, opts.ipHash),
+          inArray(faucetClaims.status, ["pending", "success"]),
+        ),
+      );
+
+    const claimedByIp = Number(ipRow?.total ?? 0);
+    if (claimedByIp + cfg.claimAmount > cfg.ipTotalLimit) {
+      return {
+        available: false,
+        reason: "ip_limit",
+        remainingToday,
+      };
+    }
   }
 
   if (cfg.globalCooldownMinutes > 0) {

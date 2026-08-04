@@ -204,6 +204,13 @@ function writeClaimHint(claim) {
     process.stderr.write(
       `\nHint: Faucet side is empty or paused — try again later (not a wallet setup issue).\n`,
     );
+    return;
+  }
+
+  if (reason === "ip_limit") {
+    process.stderr.write(
+      `\nHint: This network address hit the faucet IP claim cap. Try another network or wait — rotating wallets will not help.\n`,
+    );
   }
 }
 
