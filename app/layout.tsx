@@ -7,15 +7,13 @@ export const metadata: Metadata = {
   description:
     "One-click testnet Circle USDC (SAC) on the Stellar Blockchain. Powered by Sozu.",
   icons: {
-    apple: [
-      { url: "/icons/sozu_icon_152.png", sizes: "152x152", type: "image/png" },
-      { url: "/icons/sozu_icon_180.png", sizes: "180x180", type: "image/png" },
-      { url: "/icons/sozu_icon_192.png", sizes: "192x192", type: "image/png" },
-    ],
     icon: [
-      { url: "/icons/sozu_icon_192.png", sizes: "192x192", type: "image/png" },
-      { url: "/icons/sozu_icon_512.png", sizes: "512x512", type: "image/png" },
+      { url: "/favicon.ico", sizes: "any" },
+      { url: "/favicon-16x16.png", sizes: "16x16", type: "image/png" },
+      { url: "/favicon-32x32.png", sizes: "32x32", type: "image/png" },
     ],
+    apple: [{ url: "/apple-touch-icon.png", sizes: "180x180", type: "image/png" }],
+    shortcut: "/favicon.ico",
   },
 };
 
