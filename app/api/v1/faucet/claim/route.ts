@@ -200,7 +200,7 @@ export async function POST(request: Request) {
 
     const canCover = await vaultCanCoverClaim(claimAmount);
     if (canCover !== true) {
-      const minor = await getDispenserBalanceMinor();
+      const minor = await getDispenserBalanceMinor({ cached: true });
       const have = minor !== null ? minorToUsdc(minor) : 0;
       const res: FaucetClaimResponse = {
         success: false,
@@ -247,6 +247,7 @@ export async function POST(request: Request) {
       const { txHash } = await sendFaucetPayment({
         toWalletAddress: walletAddress,
         amount: claimAmount,
+        preflighted: true,
       });
 
       await finalizeClaim({

@@ -129,7 +129,8 @@ More: ${origin}/llms.txt · OpenAPI in repo \`openapi.yaml\`
   return new Response(body, {
     headers: {
       "Content-Type": "text/markdown; charset=utf-8",
-      "Cache-Control": "public, max-age=60",
+      "Cache-Control":
+        "public, max-age=60, s-maxage=3600, stale-while-revalidate=86400",
     },
   });
 }

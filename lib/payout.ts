@@ -85,10 +85,16 @@ async function waitForResult(
   return { status: "PENDING" };
 }
 
+let fundedTreasury: string | null = null;
+
 async function ensureTreasuryHasXlm(publicKey: string): Promise<void> {
+  if (fundedTreasury === publicKey) return;
   const cfg = getFaucetConfig();
   const res = await fetch(`${cfg.horizonUrl}/accounts/${publicKey}`);
-  if (res.ok) return;
+  if (res.ok) {
+    fundedTreasury = publicKey;
+    return;
+  }
 
   // Friendbot the treasury so fees can be paid.
   const fb = await fetch(
@@ -101,6 +107,7 @@ async function ensureTreasuryHasXlm(publicKey: string): Promise<void> {
   }
   // Horizon eventual consistency
   await new Promise((r) => setTimeout(r, 2000));
+  fundedTreasury = publicKey;
 }
 
 async function submitTreasuryInvocation(operation: xdr.Operation): Promise<string> {
@@ -146,8 +153,30 @@ async function submitTreasuryInvocation(operation: xdr.Operation): Promise<strin
   return sent.hash;
 }
 
-/** On-chain USDC balance of vault contract, or treasury token balance if no vault. */
-export async function getDispenserBalanceMinor(): Promise<bigint | null> {
+const BALANCE_CACHE_MS = 30_000;
+let balanceCache: { minor: bigint; at: number } | null = null;
+
+/**
+ * On-chain USDC balance of vault contract, or treasury token balance if no vault.
+ * `cached: true` accepts a per-instance reading up to 30 s old (status / health);
+ * claims read fresh.
+ */
+export async function getDispenserBalanceMinor(
+  opts: { cached?: boolean } = {},
+): Promise<bigint | null> {
+  if (
+    opts.cached &&
+    balanceCache &&
+    Date.now() - balanceCache.at < BALANCE_CACHE_MS
+  ) {
+    return balanceCache.minor;
+  }
+  const minor = await readDispenserBalanceMinor();
+  if (minor !== null) balanceCache = { minor, at: Date.now() };
+  return minor;
+}
+
+async function readDispenserBalanceMinor(): Promise<bigint | null> {
   const cfg = getFaucetConfig();
   const funderPk = getTreasuryPublicKey();
   if (!funderPk) return null;
@@ -208,17 +237,23 @@ export async function getDispenserBalanceMinor(): Promise<bigint | null> {
  */
 export async function vaultCanCoverClaim(
   amountUsdc: number,
+  opts: { cached?: boolean } = {},
 ): Promise<boolean | null> {
-  const minor = await getDispenserBalanceMinor();
+  const minor = await getDispenserBalanceMinor(opts);
   if (minor === null) return null;
   return minor >= usdcToMinor(amountUsdc);
 }
 
 export type SendPaymentResult = { txHash: string };
 
+/**
+ * `preflighted: true` skips the recipient and balance checks; only pass it when
+ * the caller ran `assertRecipientCanReceiveUsdc` and `vaultCanCoverClaim` itself.
+ */
 export async function sendFaucetPayment(params: {
   toWalletAddress: string;
   amount: number;
+  preflighted?: boolean;
 }): Promise<SendPaymentResult> {
   const cfg = getFaucetConfig(); // asserts testnet
   const to = normalizeAddress(params.toWalletAddress);
@@ -226,43 +261,47 @@ export async function sendFaucetPayment(params: {
     type: "i128",
   });
 
-  await assertRecipientCanReceiveUsdc(to);
+  if (!params.preflighted) {
+    await assertRecipientCanReceiveUsdc(to);
 
-  const canCover = await vaultCanCoverClaim(params.amount);
-  if (canCover !== true) {
     const minor = await getDispenserBalanceMinor();
-    const have = minor !== null ? minorToUsdc(minor) : 0;
-    throw new Error(
-      canCover === null
-        ? `Faucet balance unreadable (treasury/RPC). Need ${params.amount} USDC.`
-        : `Faucet underfunded: has ${have} USDC, need ${params.amount} USDC.`,
-    );
+    if (minor === null || minor < usdcToMinor(params.amount)) {
+      throw new Error(
+        minor === null
+          ? `Faucet balance unreadable (treasury/RPC). Need ${params.amount} USDC.`
+          : `Faucet underfunded: has ${minorToUsdc(minor)} USDC, need ${params.amount} USDC.`,
+      );
+    }
   }
 
-  if (cfg.faucetContractId) {
-    const faucet = new Contract(cfg.faucetContractId);
+  try {
+    if (cfg.faucetContractId) {
+      const faucet = new Contract(cfg.faucetContractId);
+      const txHash = await submitTreasuryInvocation(
+        faucet.call("claim", Address.fromString(to).toScVal(), amountScVal),
+      );
+      return { txHash };
+    }
+
+    const treasuryPk = getTreasuryKeypair().publicKey();
+    const token = new Contract(cfg.tokenContractId);
     const txHash = await submitTreasuryInvocation(
-      faucet.call("claim", Address.fromString(to).toScVal(), amountScVal),
+      token.call(
+        "transfer",
+        Address.fromString(treasuryPk).toScVal(),
+        Address.fromString(to).toScVal(),
+        amountScVal,
+      ),
     );
     return { txHash };
+  } finally {
+    balanceCache = null;
   }
-
-  const treasuryPk = getTreasuryKeypair().publicKey();
-  const token = new Contract(cfg.tokenContractId);
-  const txHash = await submitTreasuryInvocation(
-    token.call(
-      "transfer",
-      Address.fromString(treasuryPk).toScVal(),
-      Address.fromString(to).toScVal(),
-      amountScVal,
-    ),
-  );
-  return { txHash };
 }
 
 export async function getVaultHealth() {
   const cfg = getFaucetConfig();
-  const minor = await getDispenserBalanceMinor();
+  const minor = await getDispenserBalanceMinor({ cached: true });
   const balanceUsdc = minor !== null ? minorToUsdc(minor) : null;
   return {
     mode: cfg.faucetContractId
