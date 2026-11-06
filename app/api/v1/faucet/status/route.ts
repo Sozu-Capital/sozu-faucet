@@ -74,7 +74,7 @@ export async function GET(request: Request) {
     });
 
     const claimAmount = getFaucetConfig().claimAmount;
-    const canCover = await vaultCanCoverClaim(claimAmount);
+    const canCover = await vaultCanCoverClaim(claimAmount, { cached: true });
     if (availability.available && canCover === false) {
       availability = {
         available: false,
